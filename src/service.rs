@@ -47,6 +47,7 @@ pub struct AppService {
     pub(crate) batches: crate::batch_service::BatchManager,
     pub(crate) history: crate::history::History,
     pub lists: RwLock<Vec<SiteList>>,
+    pub(crate) site_catalog: crate::site_catalog::Manager,
     pub(crate) connection_presets: Vec<ConnectionPreset>,
     pub(crate) permits: RwLock<Vec<Permit>>,
     pub(crate) auth_file: PathBuf,
@@ -82,6 +83,7 @@ impl AppService {
                 Err(error) => (vec![], Some(error)),
             };
         lists.extend(storage::load_custom(&config.data)?);
+        let site_catalog = crate::site_catalog::Manager::new(&config.data, &lists)?;
         let history = crate::history::History::open(&config.data)?;
         let engine = Engine::new(config.data.clone(), config.control_port, shutdown.clone())?
             .with_history(history.clone());
@@ -104,6 +106,7 @@ impl AppService {
             monitor_route: std::sync::Mutex::new(None),
             history,
             lists: RwLock::new(lists),
+            site_catalog,
             connection_presets,
             permits: RwLock::new(permits),
             auth_file: config.auth_file,
@@ -117,6 +120,17 @@ impl AppService {
             shutdown,
             demo: tokio::sync::Mutex::new(None),
         })
+    }
+    pub fn site_catalog(&self) -> crate::site_catalog::Snapshot {
+        self.site_catalog.snapshot()
+    }
+    pub async fn save_site_catalog(
+        &self,
+        request: crate::site_catalog::SaveRequest,
+    ) -> Result<crate::site_catalog::Snapshot, String> {
+        let _gate = self.mutation.lock().await;
+        self.ensure_mutable().await?;
+        self.site_catalog.save(request)
     }
     pub async fn bootstrap(&self, token: &str) -> Value {
         let permits = self.permits.read().await.clone();

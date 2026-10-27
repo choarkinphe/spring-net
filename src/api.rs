@@ -115,6 +115,7 @@ pub fn router(state: App) -> Router {
             }),
         )
         .route("/transport.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/transport.js")) }))
+        .route("/site-catalog.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/site-catalog.js")) }))
         .route("/network-tools.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/network-tools.js")) }))
         .route("/network-tools.css", get(|| async { ([(header::CONTENT_TYPE,"text/css; charset=utf-8")],include_str!("../web/network-tools.css")) }))
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
@@ -128,6 +129,7 @@ pub fn router(state: App) -> Router {
         .route("/api/state", get(snapshot))
         .route("/api/runs", post(start))
         .route("/api/stop", post(stop))
+        .route("/api/site-catalog", get(site_catalog).put(save_site_catalog))
         .route("/api/network-tools/info", get(network_info))
         .route("/api/network-tools/state", get(network_state))
         .route("/api/network-tools/start", post(start_network_tool))
@@ -155,6 +157,19 @@ pub fn router(state: App) -> Router {
         .layer(DefaultBodyLimit::max(1_048_576))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
+}
+async fn site_catalog(State(s): State<App>) -> Json<Value> {
+    Json(json!(s.service.site_catalog()))
+}
+async fn save_site_catalog(
+    State(s): State<App>,
+    Json(request): Json<crate::site_catalog::SaveRequest>,
+) -> ApiResult {
+    s.service
+        .save_site_catalog(request)
+        .await
+        .map(|snapshot| Json(json!(snapshot)))
+        .map_err(error)
 }
 async fn network_info(State(s): State<App>) -> Json<Value> {
     Json(json!({"version":env!("CARGO_PKG_VERSION"),"token":s.token}))

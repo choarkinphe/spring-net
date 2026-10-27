@@ -734,6 +734,7 @@ impl ApiFixture {
                     shutdown.clone(),
                 )
                 .unwrap(),
+                site_catalog: crate::site_catalog::Manager::new(data.path(), &[]).unwrap(),
                 lists: RwLock::new(vec![site_list("builtin-fixture", true, vec![])]),
                 connection_presets: vec![],
                 permits: RwLock::new(vec![]),
@@ -1024,6 +1025,11 @@ async fn api_write_routes_require_token_same_origin_and_json() {
             serde_json::to_value(config("http", &["unknown"])).unwrap(),
         ),
         ("PUT", "/api/lists", json!({"lists": []})),
+        (
+            "PUT",
+            "/api/site-catalog",
+            json!({"expected_revision":0,"sites":[],"groups":[]}),
+        ),
     ] {
         let mut missing = f.write_request(method, path, body.clone());
         missing.headers_mut().remove("x-aonet-token");
@@ -1079,6 +1085,58 @@ async fn api_write_routes_require_token_same_origin_and_json() {
             .unwrap()
             .contains("未登记授权端点")
     );
+}
+
+#[tokio::test]
+async fn catalog_api_is_inert_shared_and_revision_guarded() {
+    let f = ApiFixture::new();
+    let response = f
+        .send(
+            Request::builder()
+                .uri("/api/site-catalog")
+                .header("host", f.host())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_json(response).await["revision"], 0);
+    assert!(!f.state.data.join("site-catalog.json").exists());
+    let mut body = json!({"expected_revision":0,
+        "sites":[{"id":"shared","name":"Shared","address":"example.invalid","port":443}],
+        "groups":[{"id":"one","name":"One","description":"","site_ids":["shared"]},
+                  {"id":"two","name":"Two","description":"","site_ids":["shared"]}]});
+    let response = f
+        .send(f.write_request("PUT", "/api/site-catalog", body.clone()))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_json(response).await["revision"], 1);
+    let response = f
+        .send(f.write_request("PUT", "/api/site-catalog", body.clone()))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    body["expected_revision"] = json!(1);
+    body["sites"][0]["name"] = json!("Updated once");
+    let response = f
+        .send(f.write_request("PUT", "/api/site-catalog", body.clone()))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = response_json(response).await;
+    assert_eq!(saved["sites"].as_array().unwrap().len(), 1);
+    assert_eq!(saved["sites"][0]["name"], "Updated once");
+    assert_eq!(
+        saved["groups"][0]["site_ids"],
+        saved["groups"][1]["site_ids"]
+    );
+    body["expected_revision"] = json!(2);
+    body["sites"][0]["builtin"] = json!(true);
+    let response = f
+        .send(f.write_request("PUT", "/api/site-catalog", body))
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(f.state.network_state().await.is_none());
+    assert!(f.state.engine.snapshot().await.is_none());
+    assert!(!f.state.data.join("lists.json").exists());
 }
 
 #[tokio::test]

@@ -67,7 +67,18 @@
     const help={ping:"输入单个 IP 或域名，不包含协议、路径或端口。",traceroute:"输入单个 IP 或域名；仅追踪这个地址，不扫描网段。",dns:"输入要解析的域名；IP 输入会显示无需解析。",tcp:"左侧填写 IP / 域名，右侧填写单个端口，不能填写端口范围。",tls:"填写需要验证的 IP / 域名与端口；端口留空时使用 443。",http:"请输入完整 HTTP(S) 网址；保留路径，不接受账号密码、查询参数或片段。"};
     $("target-help").textContent=help[tool];
     $("target").placeholder=tool==="http"?"https://example.com/health":"例如 example.com 或 192.168.1.1";
+    window.siteCatalog?.setLocked(Boolean(locked));
   }
+  function applySite(site){
+    if(!state.known||state.pending||state.uncertain||activeStatuses.has(state.snapshot?.status))return false;
+    const tool=selectedTool(),isUrl=/^https?:\/\//i.test(site.address);
+    const url=isUrl?new URL(site.address):null;
+    $("target").value=tool==="http"?(isUrl?site.address:""):(url?url.hostname.replace(/^\[|\]$/g,""):site.address);
+    $("port").value=site.port??(url?(url.port||(url.protocol==="https:"?443:80)):"");
+    $("draft-note").textContent=tool==="http"&&!isUrl?`${site.name} 未保存完整网址，请手动填写 http:// 或 https:// 地址。`:`已填入「${site.name}」。${["tcp","tls"].includes(tool)?($("port").value?"端口来自站点配置或网址。":"该站点未设置默认端口。 "):""}请手动点击开始。`;
+    showError("");render();return true;
+  }
+  window.networkToolDraft={applySite,isLocked:()=>!state.known||state.pending||Boolean(state.uncertain)||activeStatuses.has(state.snapshot?.status)};
   async function request(kind,body){
     if(native)return window.__TAURI__.core.invoke({info:"network_info",state:"network_state",start:"network_start",stop:"network_stop"}[kind],body?{request:body}:undefined);
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);

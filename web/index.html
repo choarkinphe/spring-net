@@ -7,15 +7,19 @@
   <title>AoNet · 基础网络检测</title>
   <link rel="stylesheet" href="network-tools.css">
   <script src="network-tools.js" defer></script>
+  <script src="site-catalog.js" defer></script>
 </head>
 <body>
   <main class="tool-window">
     <header class="app-header"><strong>AoNet</strong><span id="version">正在连接…</span></header>
+    <nav class="page-nav" aria-label="页面"><button id="nav-tools" type="button" aria-current="page">基础检测</button><button id="nav-catalog" type="button">常用站点</button></nav>
+    <div id="tools-page">
     <section class="tool-input" aria-labelledby="tool-title">
       <h1 id="tool-title">基础网络检测</h1>
       <p class="intro">先选择功能，再填写对应的检测目标。</p>
       <form id="tool-form">
         <fieldset class="tool-selector"><legend class="sr-only">检查工具</legend><label class="tool-choice"><input type="radio" name="tool" value="ping" checked><span>Ping</span></label><label class="tool-choice"><input type="radio" name="tool" value="traceroute"><span>Traceroute</span></label><label class="tool-choice"><input type="radio" name="tool" value="dns"><span>DNS</span></label><label class="tool-choice"><input type="radio" name="tool" value="tcp"><span>端口检测</span></label><label class="tool-choice"><input type="radio" name="tool" value="tls"><span>TLS</span></label><label class="tool-choice"><input type="radio" name="tool" value="http"><span>HTTP</span></label></fieldset>
+        <details class="site-picker"><summary>选择常用站点</summary><div class="picker-fields"><label>组合<select id="quick-group" disabled><option value="">全部站点</option></select></label><label>站点<select id="quick-site" disabled><option value="">请选择站点</option></select></label><button id="apply-site" type="button" disabled>填入地址</button></div><p id="draft-note" class="hint" role="status">仅填入检测草稿，不会自动开始。</p></details>
         <div id="input-fields" class="input-fields">
           <div class="target-field"><label id="target-label" for="target">IP / 域名</label><input id="target" type="text" placeholder="例如 example.com 或 192.168.1.1" autocomplete="off" spellcheck="false" required maxlength="2048" aria-describedby="target-help error"></div>
           <div id="port-label" class="port-field" hidden><label for="port">端口</label><input id="port" type="number" min="1" max="65535" step="1" placeholder="例如 443" aria-describedby="target-help error"></div>
@@ -33,6 +37,23 @@
       <pre id="output" tabindex="0" aria-label="运行输出">运行输出会显示在这里。</pre>
       <p id="summary" class="summary" role="status">输入站点后，选择工具并点击开始。</p>
     </section>
+    </div>
+    <section id="catalog-page" class="catalog-page" aria-labelledby="catalog-title" hidden>
+      <div class="catalog-heading"><div><h1 id="catalog-title" tabindex="-1">常用站点</h1><p class="intro">站点统一管理，组合只保存引用。</p></div><div class="catalog-actions"><button id="new-site" type="button" class="primary" disabled>新增站点</button><button id="new-group" type="button" disabled>新增组合</button></div></div>
+      <p id="catalog-error" class="error" role="alert" hidden></p><p id="catalog-message" class="hint" role="status"></p>
+      <div class="catalog-filters"><label>站点组合<select id="catalog-group" disabled><option value="">全部站点</option></select></label><label>搜索站点<input id="catalog-search" type="search" placeholder="名称或地址" maxlength="200"></label><button id="catalog-reload" type="button">重新读取</button></div>
+      <div class="group-heading"><div><strong id="group-name">全部站点</strong><p id="group-description" class="hint"></p></div><div id="group-actions" class="row-actions"></div></div>
+      <p id="catalog-count" class="hint"></p><ul id="catalog-sites" class="site-list"></ul>
+      <p class="hint catalog-footnote">内置站点与组合只读；首页地址不代表业务端点或可用性已经验证。保存、选择站点均不会发起网络检查。</p>
+    </section>
+    <dialog id="catalog-dialog" aria-labelledby="editor-title"><form id="catalog-editor">
+      <h2 id="editor-title">新增站点</h2><p id="editor-hint" class="hint"></p>
+      <label class="editor-field">名称<input id="editor-name" required maxlength="200" autocomplete="off"></label>
+      <div id="site-fields"><label class="editor-field">地址<input id="editor-address" maxlength="2048" placeholder="域名、IP 或完整 HTTP(S) 网址" autocomplete="off" spellcheck="false"></label><label class="editor-field">默认端口（可选）<input id="editor-port" type="number" min="1" max="65535" step="1" placeholder="不填写则不设置"></label></div>
+      <div id="group-fields" hidden><label class="editor-field">说明<textarea id="editor-description" maxlength="1000" rows="2"></textarea></label><fieldset class="membership"><legend>包含站点（可多选，也可留空）</legend><div id="editor-members"></div></fieldset></div>
+      <p id="editor-error" class="error" role="alert" hidden></p><div class="form-actions"><button id="editor-cancel" type="button">取消</button><button id="editor-save" class="primary" type="submit">保存</button></div>
+    </form></dialog>
+    <dialog id="delete-dialog" aria-labelledby="delete-title"><h2 id="delete-title">确认删除</h2><p id="delete-impact"></p><div class="form-actions"><button id="delete-cancel" type="button">取消</button><button id="delete-confirm" class="danger" type="button">删除</button></div></dialog>
     <footer>超时不一定表示网站故障；路由节点不回复也不等于该节点发生故障。</footer>
   </main>
 </body>

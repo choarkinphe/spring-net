@@ -141,6 +141,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::site_catalog,
+            commands::save_site_catalog,
             commands::network_info,
             commands::network_state,
             commands::network_start,

@@ -6,6 +6,14 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
+pub async fn site_catalog(state: State<'_, DesktopState>) -> Result<aonet::site_catalog::Snapshot, String> {
+    Ok(state.service().await?.site_catalog())
+}
+#[tauri::command]
+pub async fn save_site_catalog(state: State<'_, DesktopState>, request: aonet::site_catalog::SaveRequest) -> Result<aonet::site_catalog::Snapshot, String> {
+    state.service().await?.save_site_catalog(request).await
+}
+#[tauri::command]
 pub async fn network_info(state:State<'_,DesktopState>)->Result<Value,String>{let _=state.service().await?;Ok(serde_json::json!({"version":env!("CARGO_PKG_VERSION")}))}
 #[tauri::command]
 pub async fn network_state(state:State<'_,DesktopState>)->Result<Option<aonet::network_tools::Snapshot>,String>{Ok(state.service().await?.network_state().await)}

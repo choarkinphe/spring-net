@@ -25,6 +25,7 @@ pub mod proxy_http;
 #[cfg(test)]
 mod regression_tests;
 pub mod service;
+pub mod site_catalog;
 pub mod storage;
 #[cfg(test)]
 mod workspace_tests;

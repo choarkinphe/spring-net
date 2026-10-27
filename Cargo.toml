@@ -1,6 +1,6 @@
 [package]
 name = "aonet"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Local network diagnostics and authorized concurrency testing"
 license = "MIT"

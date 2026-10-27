@@ -5,7 +5,7 @@
 * {box-sizing:border-box}
 [hidden] {display:none!important}
 body {margin:0;padding:28px 20px}
-button,input {font:inherit}
+button,input,select,textarea {font:inherit}
 button {cursor:pointer;border:1px solid #cfd8e3;background:white;color:#34465b;border-radius:7px;padding:9px 18px;min-height:40px}
 button:disabled {opacity:.45;cursor:not-allowed}
 button:focus-visible,input:focus-visible,pre:focus-visible {outline:2px solid #2672bb;outline-offset:3px}
@@ -44,6 +44,54 @@ pre {white-space:pre-wrap;overflow-wrap:anywhere;margin:0;border:1px solid #e0e6
 .summary {line-height:1.7;font-size:13px;margin:16px 0 0;overflow-wrap:anywhere}
 footer {font-size:11px;color:#7b8897;border-top:1px solid #edf0f4;padding:13px 26px}
 .sr-only {position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.page-nav {display:flex;gap:20px;padding:0 26px;border-bottom:1px solid #e5e9ef}
+.page-nav button {border:0;border-radius:0;padding:13px 0;color:#718094;border-bottom:2px solid transparent}
+.page-nav button[aria-current="page"] {color:#195c99;border-bottom-color:#226cb2;font-weight:600}
+.site-picker {margin:-6px 0 22px;border:1px solid #e0e6ee;border-radius:7px;padding:10px 12px}
+.site-picker summary {cursor:pointer;color:#356797;font-size:13px}
+.picker-fields {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) auto;gap:12px;align-items:end;margin-top:14px}
+.picker-fields label,.catalog-filters label {display:grid;gap:7px;font-size:12px;min-width:0}
+select,.catalog-filters input,.editor-field input,textarea {width:100%;min-width:0;border:1px solid #c8d2df;border-radius:7px;padding:10px;background:white;color:#243449;min-height:40px}
+select:focus-visible,textarea:focus-visible {outline:2px solid #2672bb;outline-offset:2px}
+.catalog-page {padding:26px}
+.catalog-heading,.group-heading {display:flex;justify-content:space-between;align-items:start;gap:16px}
+.catalog-heading .intro {margin-bottom:18px}
+.catalog-actions,.row-actions {display:flex;gap:8px;flex-wrap:wrap}
+.catalog-actions button {white-space:nowrap}
+.catalog-filters {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) auto;align-items:end;gap:14px;margin:16px 0 24px}
+.group-heading {padding-top:18px;border-top:1px solid #e5e9ef}
+.group-heading strong {font-size:16px}
+.row-actions button {padding:5px 9px;min-height:30px;font-size:12px}
+.site-list {list-style:none;padding:0;margin:8px 0 0}
+.site-list li {display:flex;justify-content:space-between;gap:18px;padding:17px 0;border-bottom:1px solid #edf0f4}
+.site-list li>div:first-child {min-width:0;flex:1}
+.site-list .row-actions {align-self:start;justify-content:flex-end;flex-shrink:0;max-width:210px}
+.site-address {font-size:13px;color:#52667d;overflow-wrap:anywhere;margin:6px 0 0}
+.site-list .hint {margin-top:4px;font-size:11px}
+.provenance {overflow-wrap:anywhere}
+.catalog-footnote {margin-top:22px}
+dialog {width:min(560px,calc(100% - 32px));max-height:calc(100vh - 48px);overflow:auto;border:1px solid #dce2ea;border-radius:12px;padding:24px;color:#243449;background:white;box-shadow:0 16px 60px #12283c30}
+dialog::backdrop {background:#182e4760}
+dialog h2 {font-size:19px;margin:0 0 10px}
+.editor-field {display:grid;gap:7px;font-size:13px;margin-top:16px}
+.membership {border:1px solid #dce2ea;border-radius:7px;padding:12px;margin:16px 0 0;min-width:0}
+.membership legend {font-size:12px;color:#647489}
+#editor-members {max-height:230px;overflow:auto}
+#editor-members label {display:flex;gap:8px;padding:7px 0;font-size:12px;overflow-wrap:anywhere}
+#editor-members input {flex-shrink:0}
+#delete-impact {white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
+.danger {background:#ac3636;border-color:#ac3636;color:white}
+@media(max-width:640px) {
+  .catalog-page {padding:20px 16px}
+  .page-nav {padding:0 16px}
+  .catalog-heading,.group-heading {flex-direction:column}
+  .catalog-filters {grid-template-columns:1fr 1fr;gap:10px}
+  .catalog-filters button {grid-column:1/-1;justify-self:end}
+  .picker-fields {grid-template-columns:1fr}
+  .picker-fields button {justify-self:end}
+  .site-list li {flex-direction:column;gap:10px}
+  .site-list .row-actions {max-width:none;justify-content:start}
+}
 @media(max-width:640px) {
   body {padding:10px}
   .tool-input,.tool-results {padding:20px 16px}
