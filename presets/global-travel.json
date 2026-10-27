@@ -1,0 +1,19 @@
+{
+  "id": "global-travel",
+  "name": "全球旅行与比价平台",
+  "description": "常见国际 OTA、住宿、旅行内容与比价平台官方首页低频探测书签；不是同一业务类型或全球实时排名，不代表当前可达或获准压测。",
+  "builtin": true,
+  "targets": [
+    {"id": "trip-com", "name": "Trip.com", "url": "https://www.trip.com/", "region": "GLOBAL", "source": "https://group.trip.com/brands", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "skyscanner", "name": "Skyscanner 天巡", "url": "https://www.skyscanner.net/", "region": "GLOBAL", "source": "https://group.trip.com/brands", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "booking-com", "name": "Booking.com", "url": "https://www.booking.com/", "region": "GLOBAL", "source": "https://www.bookingholdings.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "agoda", "name": "Agoda 安可达", "url": "https://www.agoda.com/", "region": "GLOBAL", "source": "https://www.bookingholdings.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "priceline", "name": "Priceline", "url": "https://www.priceline.com/", "region": "GLOBAL", "source": "https://www.bookingholdings.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "kayak", "name": "KAYAK", "url": "https://www.kayak.com/", "region": "GLOBAL", "source": "https://www.bookingholdings.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "expedia", "name": "Expedia", "url": "https://www.expedia.com/", "region": "GLOBAL", "source": "https://www.expediagroup.com/en-us/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "hotels-com", "name": "Hotels.com", "url": "https://www.hotels.com/", "region": "GLOBAL", "source": "https://www.expediagroup.com/en-us/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "vrbo", "name": "Vrbo", "url": "https://www.vrbo.com/", "region": "GLOBAL", "source": "https://www.expediagroup.com/en-us/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "airbnb", "name": "Airbnb 爱彼迎", "url": "https://www.airbnb.com/", "region": "GLOBAL", "source": "https://www.airbnb.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "tripadvisor", "name": "Tripadvisor 猫途鹰", "url": "https://www.tripadvisor.com/", "region": "GLOBAL", "source": "https://www.tripadvisor.com/", "checked_at": "2026-10-26", "probe_only": true}
+  ]
+}

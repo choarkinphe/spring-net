@@ -1,0 +1,18 @@
+{
+  "id": "cn-airlines",
+  "name": "中国大陆航司",
+  "description": "中国大陆常见航司官方首页低频探测书签；仅核对来源，不代表当前可达或获准压测。",
+  "builtin": true,
+  "targets": [
+    {"id": "air-china", "name": "中国国际航空", "url": "https://www.airchina.com.cn/", "region": "CN", "source": "https://www.airchina.com.cn/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "china-eastern", "name": "中国东方航空", "url": "https://www.ceair.com/", "region": "CN", "source": "https://www.ceair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "china-southern", "name": "中国南方航空", "url": "https://www.csair.com/", "region": "CN", "source": "https://www.csair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "hainan-airlines", "name": "海南航空", "url": "https://www.hnair.com/", "region": "CN", "source": "https://www.hnair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "xiamen-airlines", "name": "厦门航空", "url": "https://www.xiamenair.com/", "region": "CN", "source": "https://www.xiamenair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "sichuan-airlines", "name": "四川航空", "url": "https://www.sichuanair.com/", "region": "CN", "source": "https://www.sichuanair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "shenzhen-airlines", "name": "深圳航空", "url": "https://global.shenzhenair.com/", "region": "CN", "source": "https://global.shenzhenair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "spring-airlines", "name": "春秋航空", "url": "https://www.ch.com/", "region": "CN", "source": "https://www.ch.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "juneyao-air", "name": "吉祥航空", "url": "https://www.juneyaoair.com/", "region": "CN", "source": "https://www.juneyaoair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "shandong-airlines", "name": "山东航空", "url": "https://www.sda.cn/", "region": "CN", "source": "https://www.sda.cn/", "checked_at": "2026-10-26", "probe_only": true}
+  ]
+}

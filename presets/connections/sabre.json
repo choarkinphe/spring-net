@@ -1,0 +1,63 @@
+[
+  {
+    "id": "sabre-agency-workspace",
+    "provider": "Sabre",
+    "product": "Mosaic Agency Workspace",
+    "aliases": [
+      "Sabre Red 360",
+      "Red360",
+      "Sabre Mosaic Agency Workspace"
+    ],
+    "access_type": "desktop_browser",
+    "environment": null,
+    "version": null,
+    "status": "incomplete",
+    "summary": "Sabre 官方产品为 Mosaic Agency Workspace，原 Sabre Red 360；支持桌面/浏览器使用，但没有公开核实完整客户端连接参数。",
+    "limitations": [
+      "官方产品页及支持入口不是客户端业务连接端点。",
+      "不以 Sabre API 地址代替 Red 360 / Agency Workspace 客户端地址。",
+      "仅参考；未登录、未探测。"
+    ],
+    "missing": [
+      "机构实际使用的产品版本和部署方式",
+      "完整客户端主机/端口矩阵及协议",
+      "从 Sabre Central / Hub 获得的机构适用指南"
+    ],
+    "endpoints": [
+      {
+        "kind": "host",
+        "address": null,
+        "protocol": null,
+        "port": null,
+        "purpose": "Agency Workspace 客户端连接参数（尚待确认）",
+        "evidence": "官方产品/支持资料确认产品和支持路径，未公开完整主机/端口矩阵。",
+        "source_ids": [
+          "sabre-product",
+          "sabre-support"
+        ],
+        "notes": "未知字段保留 null；产品页不作为连接目标。"
+      }
+    ],
+    "sources": [
+      {
+        "id": "sabre-product",
+        "title": "Sabre Mosaic — Agency Workspace",
+        "url": "https://www.sabre.com/agency-mosaic/experience-suite/agency-workspace",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "产品名称、原 Red 360 名称与桌面/浏览器形态；非客户端网络白名单。"
+      },
+      {
+        "id": "sabre-support",
+        "title": "Sabre — Support for agencies",
+        "url": "https://www.sabre.com/support-agencies",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "机构支持入口及 Hub 指南路径；不代表实际业务服务地址。"
+      }
+    ],
+    "protected_domains": [
+      "sabre.com"
+    ]
+  }
+]

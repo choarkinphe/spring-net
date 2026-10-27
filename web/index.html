@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>AoNet · 基础网络检测</title>
+  <link rel="stylesheet" href="network-tools.css">
+  <script src="network-tools.js" defer></script>
+</head>
+<body>
+  <main class="tool-window">
+    <header class="app-header"><strong>AoNet</strong><span id="version">正在连接…</span></header>
+    <section class="tool-input" aria-labelledby="tool-title">
+      <h1 id="tool-title">基础网络检测</h1>
+      <p class="intro">先选择功能，再填写对应的检测目标。</p>
+      <form id="tool-form">
+        <fieldset class="tool-selector"><legend class="sr-only">检查工具</legend><label class="tool-choice"><input type="radio" name="tool" value="ping" checked><span>Ping</span></label><label class="tool-choice"><input type="radio" name="tool" value="traceroute"><span>Traceroute</span></label><label class="tool-choice"><input type="radio" name="tool" value="dns"><span>DNS</span></label><label class="tool-choice"><input type="radio" name="tool" value="tcp"><span>端口检测</span></label><label class="tool-choice"><input type="radio" name="tool" value="tls"><span>TLS</span></label><label class="tool-choice"><input type="radio" name="tool" value="http"><span>HTTP</span></label></fieldset>
+        <div id="input-fields" class="input-fields">
+          <div class="target-field"><label id="target-label" for="target">IP / 域名</label><input id="target" type="text" placeholder="例如 example.com 或 192.168.1.1" autocomplete="off" spellcheck="false" required maxlength="2048" aria-describedby="target-help error"></div>
+          <div id="port-label" class="port-field" hidden><label for="port">端口</label><input id="port" type="number" min="1" max="65535" step="1" placeholder="例如 443" aria-describedby="target-help error"></div>
+        </div>
+        <p id="target-help" class="hint">输入单个 IP 或域名，不包含协议、路径或端口。</p>
+        <p id="budget" class="hint">Ping：4 次，间隔 1 秒。</p>
+        <p id="error" role="alert" class="error" hidden></p>
+        <button id="clear-uncertain" type="button" class="text-button" hidden>已核对，允许手动重新开始（可能重复检查）</button>
+        <div class="form-actions"><button id="start" class="primary" type="submit" disabled>开始</button><button id="stop" type="button" disabled>停止</button></div>
+      </form>
+    </section>
+    <section class="tool-results" aria-label="检查结果">
+      <div class="output-heading"><span id="status" role="status">等待开始</span><button id="reconnect" type="button" class="text-button">重新连接</button></div>
+      <p id="destination" class="destination">尚未发起网络检查。</p>
+      <pre id="output" tabindex="0" aria-label="运行输出">运行输出会显示在这里。</pre>
+      <p id="summary" class="summary" role="status">输入站点后，选择工具并点击开始。</p>
+    </section>
+    <footer>超时不一定表示网站故障；路由节点不回复也不等于该节点发生故障。</footer>
+  </main>
+</body>
+</html>

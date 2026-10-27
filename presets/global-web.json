@@ -1,0 +1,15 @@
+{
+  "id": "global-web",
+  "name": "全球常用网站",
+  "description": "常见国际科技、电商与知识网站官方首页低频探测书签；Google 仅首页，不代表各地当前可达或获准压测。",
+  "builtin": true,
+  "targets": [
+    {"id": "microsoft", "name": "Microsoft 微软", "url": "https://www.microsoft.com/", "region": "GLOBAL", "source": "https://www.microsoft.com/en-us", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "apple", "name": "Apple 苹果", "url": "https://www.apple.com/", "region": "GLOBAL", "source": "https://www.apple.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "github", "name": "GitHub", "url": "https://github.com/", "region": "GLOBAL", "source": "https://github.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "wikipedia", "name": "Wikipedia 维基百科", "url": "https://www.wikipedia.org/", "region": "GLOBAL", "source": "https://www.wikipedia.org/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "google", "name": "Google", "url": "https://www.google.com/", "region": "GLOBAL", "source": "https://www.google.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "amazon", "name": "Amazon 亚马逊", "url": "https://www.amazon.com/", "region": "GLOBAL", "source": "https://www.amazon.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "cloudflare", "name": "Cloudflare", "url": "https://www.cloudflare.com/", "region": "GLOBAL", "source": "https://www.cloudflare.com/", "checked_at": "2026-10-26", "probe_only": true}
+  ]
+}

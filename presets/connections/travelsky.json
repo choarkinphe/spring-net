@@ -1,0 +1,54 @@
+[
+  {
+    "id": "travelsky-ibe-plus",
+    "provider": "TravelSky",
+    "product": "Internet Booking Engine Plus",
+    "aliases": [
+      "IBE+",
+      "IBE Plus",
+      "TravelSky IBE+"
+    ],
+    "access_type": "unconfirmed",
+    "environment": null,
+    "version": null,
+    "status": "incomplete",
+    "summary": "官方历史资料中的 Internet Booking Engine Plus（IBE+）；是否就是用户实际接入的产品尚未确认，服务端点未知。",
+    "limitations": [
+      "官方文章发布日期为 2014-06-23；URL 的 2023/12 路径不是发布日期。",
+      "产品识别参考，不是当前服务/版本有效性的承诺。",
+      "不将 TravelSky 官网或产品文章伪装成业务连接地址。"
+    ],
+    "missing": [
+      "用户实际接入产品与版本",
+      "机构环境与专线/互联网接入方式",
+      "主机、端口、协议及当前厂商接入文档"
+    ],
+    "endpoints": [
+      {
+        "kind": "host",
+        "address": null,
+        "protocol": null,
+        "port": null,
+        "purpose": "IBE+ 业务连接参数（尚待确认）",
+        "evidence": "官方历史产品文章未公开可核实的业务主机、端口或协议。",
+        "source_ids": [
+          "ibe-product"
+        ],
+        "notes": "必须由用户及厂商确认；未知字段保留 null。"
+      }
+    ],
+    "sources": [
+      {
+        "id": "ibe-product",
+        "title": "TravelSky — Internet Booking Engine Plus",
+        "url": "https://www.travelsky.cn/mainen/Business/Dis/UniversalInterface/2023/12/I1189867891038617600.html",
+        "checked_at": "2026-10-27",
+        "published_at": "2014-06-23",
+        "scope": "官方历史产品介绍；不能据此确认当前机构接入产品或连接参数。"
+      }
+    ],
+    "protected_domains": [
+      "travelsky.cn"
+    ]
+  }
+]

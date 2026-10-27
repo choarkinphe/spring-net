@@ -1,0 +1,14 @@
+{
+  "id": "cn-web",
+  "name": "中国常用网站",
+  "description": "中国常见搜索、企业、电商与内容网站官方首页低频探测书签；百度仅首页、京东采用移动首页，不代表当前可达或获准压测。",
+  "builtin": true,
+  "targets": [
+    {"id": "baidu", "name": "百度", "url": "https://www.baidu.com/", "region": "CN", "source": "https://www.baidu.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "tencent", "name": "腾讯", "url": "https://www.tencent.com/", "region": "CN", "source": "https://www.tencent.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "jd", "name": "京东（移动首页）", "url": "https://m.jd.com/", "region": "CN", "source": "https://m.jd.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "alibaba-group", "name": "阿里巴巴集团", "url": "https://www.alibabagroup.com/", "region": "CN", "source": "https://www.alibabagroup.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "netease", "name": "网易", "url": "https://www.163.com/", "region": "CN", "source": "https://www.163.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "bilibili", "name": "哔哩哔哩", "url": "https://www.bilibili.com/", "region": "CN", "source": "https://www.bilibili.com/", "checked_at": "2026-10-26", "probe_only": true}
+  ]
+}

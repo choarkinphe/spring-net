@@ -1,0 +1,12 @@
+{
+  "id": "cn-ota",
+  "name": "中国在线旅行平台",
+  "description": "中国常见 OTA 与旅行比价平台官方首页低频探测书签；不调用搜索、登录或预订接口，不代表当前可达或获准压测。",
+  "builtin": true,
+  "targets": [
+    {"id": "ctrip", "name": "携程旅行", "url": "https://www.ctrip.com/", "region": "CN", "source": "https://group.trip.com/brands", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "qunar", "name": "去哪儿", "url": "https://www.qunar.com/", "region": "CN", "source": "https://group.trip.com/brands", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "fliggy", "name": "飞猪旅行", "url": "https://www.fliggy.com/", "region": "CN", "source": "https://www.fliggy.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "tongcheng-travel", "name": "同程旅行", "url": "https://www.ly.com/", "region": "CN", "source": "https://www.ly.com/", "checked_at": "2026-10-26", "probe_only": true}
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "global-airlines",
+  "name": "欧美及中东航司",
+  "description": "欧美及中东常见航司官方首页低频探测书签；地区覆盖选样而非全球实时排名，不代表当前可达或获准压测。",
+  "builtin": true,
+  "targets": [
+    {"id": "lufthansa", "name": "汉莎航空", "url": "https://www.lufthansa.com/", "region": "DE", "source": "https://www.lufthansa.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "qatar-airways", "name": "卡塔尔航空", "url": "https://www.qatarairways.com/", "region": "QA", "source": "https://www.qatarairways.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "emirates", "name": "阿联酋航空", "url": "https://www.emirates.com/", "region": "AE", "source": "https://www.emirates.com/us/english", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "etihad-airways", "name": "阿提哈德航空", "url": "https://www.etihad.com/", "region": "AE", "source": "https://www.etihad.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "british-airways", "name": "英国航空", "url": "https://www.britishairways.com/", "region": "GB", "source": "https://www.britishairways.com/travel/home/public/zh_cn", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "air-france", "name": "法国航空", "url": "https://www.airfrance.com/", "region": "FR", "source": "https://www.airfrance.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "klm", "name": "荷兰皇家航空 KLM", "url": "https://www.klm.com/", "region": "NL", "source": "https://www.klm.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "united-airlines", "name": "美国联合航空", "url": "https://www.united.com/", "region": "US", "source": "https://www.united.com/zh-hant/tw", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "delta-air-lines", "name": "达美航空", "url": "https://www.delta.com/", "region": "US", "source": "https://www.delta.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "american-airlines", "name": "美国航空", "url": "https://www.aa.com/", "region": "US", "source": "https://www.aa.com/homePage.do?locale=en_US", "checked_at": "2026-10-26", "probe_only": true}
+  ]
+}

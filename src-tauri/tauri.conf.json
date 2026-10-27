@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AoNet",
+  "version": "0.5.0",
+  "identifier": "local.aonet.desktop",
+  "build": {"frontendDist": "../web"},
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {"../presets/":"presets/"},
+    "icon": ["icons/icon.png","icons/icon.icns","icons/icon.ico"],
+    "macOS": {"minimumSystemVersion":"13.0","signingIdentity":"-"},
+    "windows": {"webviewInstallMode":{"type":"downloadBootstrapper"},"nsis":{"installMode":"currentUser","languages":["SimpChinese","English"]}}
+  }
+}

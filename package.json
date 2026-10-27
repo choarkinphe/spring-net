@@ -1,0 +1,17 @@
+{
+  "name":"aonet-desktop",
+  "version":"0.5.0",
+  "private":true,
+  "engines":{"node":">=22"},
+  "scripts":{
+    "release:version":"node scripts/version.cjs",
+    "version:check":"node scripts/version.cjs --check",
+    "desktop:dev":"tauri dev",
+    "desktop:build":"tauri build",
+    "desktop:build:mac":"tauri build --bundles app",
+    "desktop:build:windows":"tauri build --bundles nsis",
+    "test:transport":"node --test web/transport.test.cjs",
+    "test:web":"node --test web/*.test.cjs"
+  },
+  "devDependencies":{"@tauri-apps/cli":"2.9.6"}
+}

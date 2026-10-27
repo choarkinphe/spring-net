@@ -1,0 +1,484 @@
+[
+  {
+    "id": "travelport-smartpoint-cloud",
+    "provider": "Travelport",
+    "product": "Smartpoint Cloud",
+    "aliases": [
+      "Travelport Smartpoint Cloud",
+      "SPC",
+      "Galileo / Travelport（Cloud 接入）"
+    ],
+    "access_type": "browser",
+    "environment": "Cloud",
+    "version": null,
+    "status": "reference_only",
+    "summary": "浏览器版 Smartpoint Cloud 的官方入口和 23 项网络放行规则；与 Smartpoint Desktop、Air API 分开。",
+    "limitations": [
+      "仅参考，不是负载测试授权或连通性验证。",
+      "23 项规则中含共享 CDN、云服务和分析平台；不将共享基础域名整体禁止登记授权。",
+      "规则表端口为 443，但不据此推断每条规则的应用协议。"
+    ],
+    "missing": [
+      "机构访问许可和本地网络策略须由 Travelport / 管理员确认；本工具不收集实际账号或凭证。"
+    ],
+    "endpoints": [
+      {
+        "kind": "url",
+        "address": "https://sp.travelport.com",
+        "protocol": "HTTPS",
+        "port": 443,
+        "purpose": "Smartpoint Cloud 浏览器直接入口",
+        "evidence": "官方入口 URL；HTTPS 标准端口 443 由 URL scheme 推导，并非独立端口探测。",
+        "source_ids": [
+          "cloud-entry"
+        ],
+        "notes": "仅连接参考，未进行登录或网络探测。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.travelport.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.smartpoint-cloud.tvptcloud.io",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.azureedge.net",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.googleapis.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.gstatic.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "host",
+        "address": "goprivate.wspan.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.bstatic.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.imgix.net",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.iceportal.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.leonardocontentcloud.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.thetrainline.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.launchdarkly.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.unpkg.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.qualtrics.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.whatfix.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.fullstory.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.akamaihd.net",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.akstat.io",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.go-mpulse.net",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.azure.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.browser-intake-datadoghq.eu",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.signalfx.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      },
+      {
+        "kind": "wildcard",
+        "address": "*.splunkcloud.com",
+        "protocol": null,
+        "port": 443,
+        "purpose": "Smartpoint Cloud 网络放行规则",
+        "evidence": "官方 Endpoints 表明确列出此规则及端口 443，未逐项给出协议。",
+        "source_ids": [
+          "cloud-rules"
+        ],
+        "notes": "通配项不是可访问 URL，不展开、不解析、不探测；第三方依赖不代表厂商自有域名。"
+      }
+    ],
+    "sources": [
+      {
+        "id": "cloud-entry",
+        "title": "MyTravelport — Smartpoint Cloud",
+        "url": "https://support.travelport.com/webhelp/mytravelport/Content/SPC.htm",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "官方说明中的 Smartpoint Cloud 直接入口；非 Desktop 连接参数。"
+      },
+      {
+        "id": "cloud-rules",
+        "title": "Smartpoint Cloud — Endpoints",
+        "url": "https://support.travelport.com/webhelp/smartpointcloud/Content/SPC/Endpoints.htm",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "Smartpoint Cloud 网络放行规则，23 项，端口 443；规则表未逐项声明应用协议。"
+      }
+    ],
+    "protected_domains": [
+      "travelport.com",
+      "tvptcloud.io",
+      "wspan.com"
+    ]
+  },
+  {
+    "id": "travelport-smartpoint-desktop",
+    "provider": "Travelport",
+    "product": "Smartpoint Desktop",
+    "aliases": [
+      "Travelport Smartpoint",
+      "Smartpoint 12"
+    ],
+    "access_type": "desktop",
+    "environment": null,
+    "version": "12",
+    "status": "incomplete",
+    "summary": "官方 Smartpoint 12 登录资料涉及 GTID、连接与配置文件；尚无完整客户端主机/端口矩阵。",
+    "limitations": [
+      "不是 Smartpoint Cloud，也不是 Travelport JSON Air API。",
+      "不得沿用旧 BookingFeed 地址作为 Desktop 连接主机。",
+      "仅参考，不执行登录或网络请求。"
+    ],
+    "missing": [
+      "完整连接主机矩阵",
+      "端口及协议",
+      "实际部署环境、连接配置与机构 GTID"
+    ],
+    "endpoints": [
+      {
+        "kind": "host",
+        "address": null,
+        "protocol": null,
+        "port": null,
+        "purpose": "Desktop 登录连接参数（尚待确认）",
+        "evidence": "官方资料说明 GTID、连接与配置文件，但不据此补造完整连接端点。",
+        "source_ids": [
+          "desktop-login"
+        ],
+        "notes": "地址、协议和端口未知，保留 null。"
+      }
+    ],
+    "sources": [
+      {
+        "id": "desktop-login",
+        "title": "Smartpoint 12 — Sign on to Travelport+",
+        "url": "https://support.travelport.com/webhelp/smartpoint1g1v/Content/SignOn12/SignOn12_1G-SignOn.htm",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "Smartpoint Desktop 12 的登录、GTID、连接与配置文件说明；非完整网络白名单。"
+      }
+    ],
+    "protected_domains": [
+      "travelport.com"
+    ]
+  },
+  {
+    "id": "travelport-air-api-v11",
+    "provider": "Travelport",
+    "product": "JSON Air API",
+    "aliases": [
+      "Travelport Air API",
+      "JSON Air v11"
+    ],
+    "access_type": "api",
+    "environment": "Production / Pre-production",
+    "version": "11",
+    "status": "reference_only",
+    "summary": "官方 Air v11 生产/预生产 API 与 OAuth 地址；当前使用 .net，旧 .com 端点已弃用。",
+    "limitations": [
+      "仅 API 文档参考，不能代替 Smartpoint Desktop 或 Cloud 的连接参数。",
+      "旧 .com 端点自 2026-01-30 弃用，不列为当前服务端点。",
+      "不保存 API 凭据，不调用 token 或业务接口。"
+    ],
+    "missing": [
+      "机构接入授权、凭据、地区及租户适用性须向 Travelport 确认。"
+    ],
+    "endpoints": [
+      {
+        "kind": "url",
+        "address": "https://api.travelport.net/11/air/",
+        "protocol": "HTTPS/1.1",
+        "port": 443,
+        "purpose": "生产环境 Air API",
+        "evidence": "官方文档端点；HTTPS/1.1、最低 TLS 1.2。端口 443 由 HTTPS 标准端口推导。",
+        "source_ids": [
+          "air-endpoints",
+          "air-oauth"
+        ],
+        "notes": "只展示引用；绝不请求 token、提交凭据或调用业务 API。"
+      },
+      {
+        "kind": "url",
+        "address": "https://api.pp.travelport.net/11/air/",
+        "protocol": "HTTPS/1.1",
+        "port": 443,
+        "purpose": "预生产环境 Air API",
+        "evidence": "官方文档端点；HTTPS/1.1、最低 TLS 1.2。端口 443 由 HTTPS 标准端口推导。",
+        "source_ids": [
+          "air-endpoints",
+          "air-oauth"
+        ],
+        "notes": "只展示引用；绝不请求 token、提交凭据或调用业务 API。"
+      },
+      {
+        "kind": "url",
+        "address": "https://auth.travelport.net/oauth/token",
+        "protocol": "HTTPS/1.1",
+        "port": 443,
+        "purpose": "生产环境 OAuth token 服务",
+        "evidence": "官方文档端点；HTTPS/1.1、最低 TLS 1.2。端口 443 由 HTTPS 标准端口推导。",
+        "source_ids": [
+          "air-oauth"
+        ],
+        "notes": "只展示引用；绝不请求 token、提交凭据或调用业务 API。"
+      },
+      {
+        "kind": "url",
+        "address": "https://auth.pp.travelport.net/oauth/token",
+        "protocol": "HTTPS/1.1",
+        "port": 443,
+        "purpose": "预生产环境 OAuth token 服务",
+        "evidence": "官方文档端点；HTTPS/1.1、最低 TLS 1.2。端口 443 由 HTTPS 标准端口推导。",
+        "source_ids": [
+          "air-oauth"
+        ],
+        "notes": "只展示引用；绝不请求 token、提交凭据或调用业务 API。"
+      }
+    ],
+    "sources": [
+      {
+        "id": "air-endpoints",
+        "title": "JSON Air v11 — Air endpoints",
+        "url": "https://support.travelport.com/webhelp/JSONAPIs/Airv11/Content/Air11/General/AirEndpointsList11.htm",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "生产和预生产 Air v11 .net 端点；旧 .com 地址自 2026-01-30 弃用。"
+      },
+      {
+        "id": "air-oauth",
+        "title": "Travelport JSON APIs — OAuth",
+        "url": "https://support.travelport.com/webhelp/JSONAPIs/Airv11/Content/GeneralProject/Oauth.htm",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "生产和预生产 OAuth token 端点，以及 HTTPS/1.1、最低 TLS 1.2 要求；仅文档参考。"
+      }
+    ],
+    "protected_domains": [
+      "travelport.net"
+    ]
+  }
+]

@@ -1,0 +1,63 @@
+[
+  {
+    "id": "amadeus-selling-platform-connect",
+    "provider": "Amadeus",
+    "product": "Selling Platform Connect",
+    "aliases": [
+      "Amadeus Selling Platform Connect",
+      "SECO",
+      "amduse"
+    ],
+    "access_type": "browser",
+    "environment": null,
+    "version": null,
+    "status": "incomplete",
+    "summary": "官方 Selling Platform Connect 产品及其身份加载入口；只核实入口，不表示登录成功或完整网络规则已验证。",
+    "limitations": [
+      "HTTPS 443 为 URL scheme 的标准端口推导。",
+      "未测试实际登录、认证跳转链或机构租户。",
+      "入口地址不等于完整连接白名单；仅参考。"
+    ],
+    "missing": [
+      "机构环境与接入方式（无需提供账号或凭证）",
+      "完整网络白名单及登录依赖",
+      "机构适用版本"
+    ],
+    "endpoints": [
+      {
+        "kind": "url",
+        "address": "https://www.sellingplatformconnect.amadeus.com",
+        "protocol": "HTTPS",
+        "port": 443,
+        "purpose": "Selling Platform Connect 身份加载入口",
+        "evidence": "已观察身份加载页；官方产品资料对应 Selling Platform Connect。端口 443 由 HTTPS scheme 推导。",
+        "source_ids": [
+          "amadeus-product",
+          "amadeus-entry"
+        ],
+        "notes": "只列入口，不进行登录测试。"
+      }
+    ],
+    "sources": [
+      {
+        "id": "amadeus-product",
+        "title": "Amadeus — Selling Platform Connect",
+        "url": "https://amadeus.com/en/travel-sellers/products/selling-platform-connect",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "官方产品身份说明；该产品页未提供完整网络规则。"
+      },
+      {
+        "id": "amadeus-entry",
+        "title": "Selling Platform Connect — Identity entry",
+        "url": "https://www.sellingplatformconnect.amadeus.com",
+        "checked_at": "2026-10-27",
+        "published_at": null,
+        "scope": "身份加载页观察；未执行登录，无完整认证依赖矩阵。"
+      }
+    ],
+    "protected_domains": [
+      "amadeus.com"
+    ]
+  }
+]

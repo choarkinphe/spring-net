@@ -1,0 +1,15 @@
+{
+  "id": "asia-airlines",
+  "name": "亚太航司",
+  "description": "亚太地区常见航司官方首页低频探测书签，含港澳台及大洋洲；仅核对来源，不代表当前可达或获准压测。",
+  "builtin": true,
+  "targets": [
+    {"id": "singapore-airlines", "name": "新加坡航空", "url": "https://www.singaporeair.com/", "region": "SG", "source": "https://www.singaporeair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "cathay-pacific", "name": "国泰航空", "url": "https://www.cathaypacific.com/", "region": "HK", "source": "https://www.cathaypacific.com/cx/en_US.html", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "ana", "name": "全日空 ANA", "url": "https://www.ana.co.jp/", "region": "JP", "source": "https://www.ana.co.jp/en/us", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "japan-airlines", "name": "日本航空 JAL", "url": "https://www.jal.co.jp/", "region": "JP", "source": "https://www.jal.co.jp/en-jp", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "korean-air", "name": "大韩航空", "url": "https://www.koreanair.com/", "region": "KR", "source": "https://www.koreanair.com/?hl=en", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "eva-air", "name": "长荣航空", "url": "https://www.evaair.com/", "region": "TW", "source": "https://www.evaair.com/", "checked_at": "2026-10-26", "probe_only": true},
+    {"id": "qantas", "name": "澳洲航空 Qantas", "url": "https://www.qantas.com/", "region": "AU", "source": "https://www.qantas.com/en-us", "checked_at": "2026-10-26", "probe_only": true}
+  ]
+}
