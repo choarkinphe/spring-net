@@ -1,0 +1,14 @@
+.settings-page {padding:26px}
+.settings-heading {display:flex;align-items:center;justify-content:space-between;gap:16px}
+.settings-current {padding:12px 14px;background:#edf4fc;border:1px solid #d8e6f5;border-radius:7px;overflow-wrap:anywhere;margin:18px 0}
+.proxy-list {padding:0;list-style:none;margin:18px 0}
+.proxy-row {display:flex;gap:12px;align-items:center;justify-content:space-between;padding:15px 0;border-bottom:1px solid #edf0f4}
+.proxy-row>label {display:flex;gap:12px;align-items:center;flex:1;min-width:0;cursor:pointer}
+.proxy-row>label>span {min-width:0;overflow-wrap:anywhere}
+.proxy-row input {flex-shrink:0}
+.proxy-row small {display:block;color:#718094;font-size:12px;margin-top:5px}
+.proxy-notice {line-height:1.8;color:#647489;font-size:12px}
+.proxy-editor-address {display:grid;grid-template-columns:1fr 110px;gap:12px}
+.route-note {font-size:12px;line-height:1.7;color:#356797;padding:9px 12px;background:#edf4fc;border-radius:6px;overflow-wrap:anywhere;margin:12px 0}
+#proxy-actions {justify-content:space-between}
+@media(max-width:640px) {.settings-page {padding:20px 16px}.proxy-row {align-items:start;flex-wrap:wrap}.proxy-row .row-actions {margin-left:26px}.proxy-editor-address {grid-template-columns:minmax(0,1fr) 85px}}

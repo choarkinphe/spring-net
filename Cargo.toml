@@ -1,6 +1,6 @@
 [package]
 name = "aonet"
-version = "0.6.0"
+version = "0.8.0"
 edition = "2024"
 description = "Local network diagnostics and authorized concurrency testing"
 license = "MIT"
@@ -25,6 +25,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 webpki-roots = "1"
+quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+hickory-proto = { version = "=0.25.2", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"

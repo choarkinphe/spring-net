@@ -90,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?,
     );
+    service.start_background().await;
     let state = Arc::new(api::AppState {
         service,
         token: uuid::Uuid::new_v4().to_string(),

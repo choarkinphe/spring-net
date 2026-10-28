@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 type Shared = Arc<Mutex<DiagnosticSnapshot>>;
 type Resolver = Arc<dyn Fn(String, u16) -> Result<Vec<SocketAddr>, String> + Send + Sync>;
 struct Active {
+    request: DiagnosticConfig,
     snapshot: Shared,
     cancel: CancellationToken,
     task: Option<JoinHandle<()>>,
@@ -80,9 +81,24 @@ impl DiagnosticManager {
         config: DiagnosticConfig,
         allowed_loopback: Vec<SocketAddr>,
     ) -> Result<DiagnosticSnapshot, String> {
+        let route = crate::proxy_settings::RouteSnapshot {
+            proxy: config.proxy.clone(),
+            ..Default::default()
+        };
+        self.start_with_route(config, allowed_loopback, route).await
+    }
+    pub async fn start_with_route(
+        &self,
+        config: DiagnosticConfig,
+        allowed_loopback: Vec<SocketAddr>,
+        route: crate::proxy_settings::RouteSnapshot,
+    ) -> Result<DiagnosticSnapshot, String> {
+        let original = policy::normalize(config, self.control_port)?;
+        let mut config = original.clone();
+        config.proxy = route.proxy.clone();
         let config = policy::normalize(config, self.control_port)?;
         let mut state = self.state.lock().await;
-        if let Some(snapshot) = duplicate(&state, &config)? {
+        if let Some(snapshot) = duplicate(&state, &original)? {
             return Ok(snapshot);
         }
         if self.shutdown.is_cancelled() {
@@ -119,7 +135,8 @@ impl DiagnosticManager {
         }
         state.last_start = Some(now);
         state.hosts.insert(config.target.clone(), now);
-        let snapshot = DiagnosticSnapshot::new(config.clone());
+        let mut snapshot = DiagnosticSnapshot::new(config.clone());
+        snapshot.route = route;
         let returned = snapshot.clone();
         let shared = Arc::new(Mutex::new(snapshot));
         let cancel = self.shutdown.child_token();
@@ -141,6 +158,7 @@ impl DiagnosticManager {
             .await;
         });
         state.current = Some(Active {
+            request: original,
             snapshot: shared,
             cancel,
             task: Some(task),
@@ -211,7 +229,7 @@ fn duplicate(
     if let Some(a) = &state.current {
         let snapshot = a.snapshot.lock().unwrap();
         if snapshot.request_id == config.request_id {
-            if snapshot.config != *config {
+            if a.request != *config {
                 return Err(
                     "request_id already belongs to a different normalized configuration".into(),
                 );
@@ -453,7 +471,7 @@ async fn execute(
                     }
                     .into();
                     s.stages.tcp.error = Some(error.to_string());
-                    s.stages.tcp.observations = json!({"method":"explicit HTTP CONNECT","phase":"proxy_resolution","target_tcp_independently_observed":false});
+                    s.stages.tcp.observations = json!({"method":if proxy_config.url.starts_with("socks5:") { "explicit SOCKS5 CONNECT" } else { "explicit HTTP CONNECT" },"phase":"proxy_resolution","target_tcp_independently_observed":false});
                 });
                 // Shared resolution cannot interrupt OS DNS. Keep diagnostics
                 // reserved until all outstanding proxy lookups drain rather

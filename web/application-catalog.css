@@ -1,0 +1,94 @@
+/* Application catalog: intentionally scoped; shared tool and batch styles stay untouched. */
+.application-catalog {
+  --ac-border:#dce3ec;
+  --ac-muted:#6b7d91;
+  --ac-ink:#243449;
+  --ac-accent:#195c99;
+  --ac-wash:#f5f8fc;
+  color:var(--ac-ink);
+}
+.application-catalog .ac-layout {display:grid;grid-template-columns:190px minmax(0,1fr);gap:24px;margin:22px 0 26px;border-top:1px solid var(--ac-border);padding-top:20px}
+.application-catalog .ac-sidebar {min-width:0;border-right:1px solid var(--ac-border);padding-right:16px}
+.application-catalog .ac-content {min-width:0}
+.application-catalog .ac-heading {display:flex;align-items:start;justify-content:space-between;gap:12px}
+.application-catalog .ac-sidebar>.ac-heading {align-items:center;min-height:36px;margin-bottom:10px;font-size:13px}
+.application-catalog h2 {font-size:17px;line-height:1.5;margin:0;font-weight:650}
+.application-catalog .ac-plus {padding:0;flex-shrink:0;width:32px;min-height:32px;font-size:21px;line-height:1;border-color:#c8d9ed;color:var(--ac-accent);background:#f1f6fd}
+.application-catalog .ac-plus:hover:not(:disabled) {background:#e7f0fc}
+.application-catalog .ac-nav {display:grid;gap:3px}
+.application-catalog .ac-nav-item {display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;padding:9px 10px;min-width:0;min-height:38px;border:0;background:transparent;font-size:13px}
+.application-catalog .ac-nav-item>span:first-child {overflow-wrap:anywhere;min-width:0}
+.application-catalog .ac-nav-item:hover:not(:disabled) {background:#f0f3f7}
+.application-catalog .ac-nav-item[aria-current="true"] {background:#e7f0fc;color:var(--ac-accent);font-weight:600}
+.application-catalog .ac-total {font-size:11px;color:var(--ac-muted);font-weight:400;white-space:nowrap}
+.application-catalog .ac-section-label {margin:16px 10px 5px;font-size:11px;color:var(--ac-muted);letter-spacing:.03em}
+.application-catalog .ac-meta {font-size:12px;line-height:1.75;color:var(--ac-muted);margin:6px 0 0;overflow-wrap:anywhere}
+.application-catalog .ac-description {font-size:13px;line-height:1.8;overflow-wrap:anywhere;margin:8px 0}
+.application-catalog .ac-actions {display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+.application-catalog .ac-actions button {font-size:12px;padding:5px 9px;min-height:32px}
+.application-catalog .ac-actions select {font-size:12px;min-height:32px;padding:5px 7px;width:auto;max-width:100%;flex:1 1 100px}
+.application-catalog .ac-maintenance:not(:empty) {margin:12px 0}
+.application-catalog .ac-search {display:grid;gap:7px;font-size:12px;margin:18px 0 10px}
+.application-catalog .ac-search input {width:100%;min-width:0;border:1px solid #c8d2df;border-radius:7px;padding:10px 12px;min-height:40px;background:#fff;color:var(--ac-ink)}
+.application-catalog .ac-list,.application-catalog .ac-endpoints,.application-catalog .ac-rules {padding:0;list-style:none;margin:12px 0 0}
+.application-catalog .ac-list {border-top:1px solid var(--ac-border)}
+.application-catalog .ac-application {border-bottom:1px solid var(--ac-border)}
+.application-catalog .ac-application>details>summary {cursor:pointer;position:relative;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:17px 0 17px 21px;list-style:none;min-height:68px}
+.application-catalog .ac-application>details>summary::-webkit-details-marker {display:none}
+.application-catalog .ac-application>details>summary::before {content:"";position:absolute;left:3px;top:25px;border-right:1.5px solid var(--ac-muted);border-bottom:1.5px solid var(--ac-muted);width:6px;height:6px;transform:rotate(-45deg)}
+.application-catalog .ac-application>details[open]>summary::before {transform:rotate(45deg);top:23px}
+.application-catalog summary:focus-visible {outline:2px solid #2672bb;outline-offset:3px;border-radius:4px}
+.application-catalog .ac-app-title {display:grid;gap:6px;min-width:0;overflow-wrap:anywhere}
+.application-catalog .ac-app-title strong {font-size:14px;font-weight:650}
+.application-catalog .ac-badge {font-size:11px;font-weight:400;color:var(--ac-muted)}
+.application-catalog .ac-app-body {padding:0 0 20px 21px}
+.application-catalog .ac-subheading {font-size:12px;font-weight:650;margin:20px 0 8px;color:#4c6078}
+.application-catalog .ac-endpoints {margin-top:0}
+.application-catalog .ac-endpoint {padding:14px 0;border-bottom:1px solid #e8edf3}
+.application-catalog .ac-endpoint:last-child {border-bottom:0}
+.application-catalog .ac-endpoint-heading {display:flex;justify-content:space-between;align-items:start;gap:16px}
+.application-catalog .ac-endpoint-heading>div:first-child {min-width:0;flex:1;overflow-wrap:anywhere}
+.application-catalog .ac-endpoint-heading strong {font-size:13px}
+.application-catalog .ac-endpoint-heading>.ac-actions {flex:0 1 180px;justify-content:flex-start}
+.application-catalog .ac-address {font:12px/1.7 "SFMono-Regular",Consolas,monospace;color:#3f607e;overflow-wrap:anywhere;margin:6px 0}
+.application-catalog .ac-rule {padding:12px 14px;background:var(--ac-wash);border-left:2px solid #ccd8e6;margin-bottom:9px;overflow-wrap:anywhere}
+.application-catalog .ac-rule strong {font-size:12px;font-weight:600}
+.application-catalog .ac-rule .ac-actions {margin-top:10px}
+.application-catalog .ac-warning {font-size:12px;line-height:1.8;color:#8b672f;background:#fff9ee;border-left:2px solid #ddc087;padding:7px 10px;overflow-wrap:anywhere}
+.application-catalog .ac-sources {font-size:12px;color:var(--ac-muted);margin:12px 0}
+.application-catalog .ac-sources summary {cursor:pointer}
+.application-catalog .ac-empty {padding:20px 0;color:var(--ac-muted);font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.application-catalog .ac-dialog {width:min(620px,calc(100vw - 32px));max-height:calc(100dvh - 40px);overflow:auto;border:1px solid var(--ac-border);border-radius:12px;padding:24px;color:var(--ac-ink);background:#fff;box-shadow:0 18px 64px #14263c30}
+.application-catalog .ac-dialog::backdrop {background:#172a435c}
+.application-catalog .ac-dialog .ac-meta {margin:8px 0 16px}
+.application-catalog .ac-fields {display:grid;gap:14px;border:0;padding:0;margin:18px 0;min-width:0}
+.application-catalog .ac-field {display:grid;gap:7px;font-size:12px;min-width:0}
+.application-catalog .ac-field input,.application-catalog .ac-field select,.application-catalog .ac-field textarea {width:100%;min-width:0;border:1px solid #c8d2df;border-radius:7px;padding:10px;min-height:40px;background:#fff;color:var(--ac-ink)}
+.application-catalog .ac-field textarea {min-height:76px;resize:vertical}
+.application-catalog .ac-fields:disabled {opacity:.6}
+.application-catalog .ac-members {padding:12px;border:1px solid var(--ac-border);border-radius:7px;max-height:260px;overflow:auto;min-width:0;margin:0}
+.application-catalog .ac-members legend {font-size:12px;padding:0 6px;color:#4c6078}
+.application-catalog .ac-members label {display:flex;align-items:start;gap:9px;padding:7px 0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.application-catalog .ac-members input {margin:4px 0 0;flex-shrink:0}
+.application-catalog .ac-members span {min-width:0}
+.application-catalog .ac-dialog-actions {display:flex;justify-content:flex-end;gap:8px;padding-top:16px;border-top:1px solid #e8edf3;margin-top:20px}
+/* Add the third quick-picker column only after the new application control is present. */
+.picker-fields:has(#quick-app) {grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.6fr) auto}
+@media(max-width:760px) {
+  .application-catalog .ac-layout {grid-template-columns:160px minmax(0,1fr);gap:16px}
+  .application-catalog .ac-sidebar {padding-right:12px}
+  .application-catalog .ac-endpoint-heading {flex-direction:column;gap:10px}
+  .application-catalog .ac-endpoint-heading>.ac-actions {flex:0 1 auto}
+  .picker-fields:has(#quick-app) {grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:540px) {
+  .application-catalog .ac-layout {grid-template-columns:minmax(0,1fr);gap:20px}
+  .application-catalog .ac-sidebar {border-right:0;border-bottom:1px solid var(--ac-border);padding:0 0 16px}
+  .application-catalog .ac-nav {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .application-catalog .ac-section-label {grid-column:1/-1}
+  .application-catalog .ac-app-body {padding-left:0}
+  .application-catalog .ac-application>details>summary {gap:8px}
+  .application-catalog .ac-application>details>summary>.ac-total {white-space:normal;text-align:right;flex-shrink:0;max-width:95px}
+  .application-catalog .ac-dialog {padding:18px}
+  .picker-fields:has(#quick-app) {grid-template-columns:minmax(0,1fr)}
+}

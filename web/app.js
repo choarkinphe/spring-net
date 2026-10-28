@@ -373,17 +373,17 @@
   function normalizeProxy(value) {
     if (!value || typeof value.url !== "string" || Object.keys(value).some(key=>key!=="url")) throw new Error("代理配置无效，仅支持 url。");
     const raw=value.url.trim();
-    if(!/^http:\/\/(?:\[[0-9a-f:]+\]|[^\s/:@?#]+):[0-9]+\/?$/i.test(raw))throw new Error("代理需为 http://主机:端口，不得含账号、密码或路径。");
+    if(!/^(?:http|socks5):\/\/(?:\[[0-9a-f:]+\]|[^\s/:@?#]+):[0-9]+\/?$/i.test(raw))throw new Error("代理需为 http:// 或 socks5://主机:端口，不得含账号、密码或路径。");
     const url=new URL(raw);const match=raw.match(/:(\d+)\/?$/);const port=Number(match[1]);
     if(port<1||port>65535||url.username||url.password||url.search||url.hash)throw new Error("代理端口或地址无效。");
-    return {url:`http://${url.hostname.toLowerCase()}:${port}`};
+    return {url:`${url.protocol}//${url.hostname.toLowerCase()}:${port}`};
   }
   function selectedProxy(prefix) {
     if($(prefix+"-route")?.value!=="proxy")return null;
     if(state.bootstrap?.proxy?.enabled!==true)throw new Error("后台尚未支持代理；不会回退直连。");
     return normalizeProxy({url:$(prefix+"-proxy").value});
   }
-  function routeLabel(proxy) { return proxy ? `HTTP 代理 ${proxy.url} · 数字地址 CONNECT · 本机 DNS` : "直连"; }
+  function routeLabel(proxy) { return proxy ? `${proxy.url.startsWith("socks5:")?"SOCKS5":"HTTP"} 代理 ${proxy.url} · 数字地址 CONNECT · 本机 DNS` : "直连"; }
   function routeError(prefix) {try{selectedProxy(prefix);return "";}catch(error){return readableError(error);}}
   function updateRouteControls() {
     for(const prefix of ["monitor","run","batch","diagnostic"]){

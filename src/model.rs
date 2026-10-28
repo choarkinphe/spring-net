@@ -210,6 +210,8 @@ pub struct Run {
     pub started_at: String,
     pub elapsed_secs: f64,
     pub config: RunConfig,
+    #[serde(default)]
+    pub route: crate::proxy_settings::RouteSnapshot,
     pub reason: String,
     pub attempted: u64,
     pub completed: u64,

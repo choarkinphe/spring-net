@@ -1,6 +1,7 @@
 //! Single, fixed-address connection checks. Address policy belongs to the
 //! manager; fixtures call these private crate helpers directly, never via a
-//! production loopback exemption. No resolver, fallback, proxy, or persistence.
+//! production loopback exemption. No resolver, fallback, or persistence.
+//! Proxy helpers accept only an already resolved, policy-checked endpoint.
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, time::Instant};
 use tokio_rustls::{
@@ -107,6 +108,16 @@ async fn tls_with_config(
         }
     };
     let fact = format!("TCP 连接成功：{address}；{tcp_ms:.2} ms");
+    tls_on_stream(host, stream, fact, cancel, config).await
+}
+
+async fn tls_on_stream(
+    host: &str,
+    stream: TcpStream,
+    fact: String,
+    cancel: &CancellationToken,
+    config: Result<ClientConfig, String>,
+) -> CheckResult {
     let trust = "证书链和名称校验开启；信任随包 Mozilla 根（不是系统/企业 CA）；不获取 AIA/OCSP；不发送 HTTP/认证数据";
     let config = match config {
         Ok(config) => config,
@@ -227,6 +238,123 @@ async fn http_with_config(
     drop(client);
     result
 }
+fn proxy_error(error: crate::proxy::ProxyError) -> CheckResult {
+    let status = match error {
+        crate::proxy::ProxyError::Cancelled => "cancelled",
+        crate::proxy::ProxyError::Timeout => "timeout",
+        _ => "error",
+    };
+    CheckResult::new(status, format!("代理隧道失败：{error}；未回退直连"))
+}
+
+async fn proxy_stream(
+    address: SocketAddr,
+    proxy: &crate::proxy::ResolvedProxy,
+    cancel: &CancellationToken,
+) -> Result<(TcpStream, String), CheckResult> {
+    let tunnel =
+        crate::proxy::connect_resolved_proxy_tunnel(proxy, address, cancel, Duration::from_secs(5))
+            .await
+            .map_err(proxy_error)?;
+    let fact = format!(
+        "代理隧道建立：{} → {address}；代理 TCP {:.2} ms；隧道协商 {:.2} ms（不是目标 TCP RTT）",
+        tunnel.proxy_addr,
+        tunnel.proxy_tcp_duration.as_secs_f64() * 1000.0,
+        tunnel.tunnel_duration.as_secs_f64() * 1000.0,
+    );
+    Ok((tunnel.stream, fact))
+}
+
+pub(crate) async fn tcp_via_proxy(
+    address: SocketAddr,
+    proxy: &crate::proxy::ResolvedProxy,
+    cancel: &CancellationToken,
+) -> CheckResult {
+    match proxy_stream(address, proxy, cancel).await {
+        Ok((stream, fact)) => {
+            drop(stream);
+            CheckResult::new("completed", format!("{fact}；已关闭，未发送目标应用数据"))
+        }
+        Err(result) => result,
+    }
+}
+
+pub(crate) async fn tls_via_proxy(
+    host: &str,
+    address: SocketAddr,
+    proxy: &crate::proxy::ResolvedProxy,
+    cancel: &CancellationToken,
+) -> CheckResult {
+    tls_via_proxy_with_config(host, address, proxy, cancel, client_config()).await
+}
+
+async fn tls_via_proxy_with_config(
+    host: &str,
+    address: SocketAddr,
+    proxy: &crate::proxy::ResolvedProxy,
+    cancel: &CancellationToken,
+    config: Result<ClientConfig, String>,
+) -> CheckResult {
+    match proxy_stream(address, proxy, cancel).await {
+        Ok((stream, fact)) => tls_on_stream(host, stream, fact, cancel, config).await,
+        Err(mut result) => {
+            result.output.push_str("；TLS 未测试");
+            result.summary = result.output.clone();
+            result
+        }
+    }
+}
+
+pub(crate) async fn http_via_proxy(
+    url: &str,
+    address: SocketAddr,
+    proxy: &crate::proxy::ResolvedProxy,
+    cancel: &CancellationToken,
+) -> CheckResult {
+    let url = match url::Url::parse(url) {
+        Ok(url) => url,
+        Err(error) => return CheckResult::new("error", format!("HTTP 网址无效：{error}")),
+    };
+    // This helper drives HTTP in the same future stack; cancellation/timeout
+    // drops that driver and its socket before returning. No detached driver.
+    match crate::proxy_http::request(
+        &url,
+        address,
+        proxy,
+        reqwest::Method::HEAD,
+        Duration::from_secs(10),
+        cancel,
+        |_, _| {},
+    )
+    .await
+    {
+        Ok(response) => {
+            let location = response
+                .headers
+                .get(reqwest::header::LOCATION)
+                .map(|v| bounded_header(v.as_bytes()))
+                .unwrap_or_else(|| "（无）".into());
+            CheckResult::new(
+                "completed",
+                format!(
+                    "HEAD {url}\nHTTP {}；代理隧道及响应头总耗时 {:.2} ms（不是目标 TCP RTT）\nLocation: {location}\n收到 HTTP 响应，不代表业务成功；未跟随重定向、未重试、未读取响应体。HTTPS 使用随包 Mozilla 根验证，不是系统/企业 CA。",
+                    response.status, response.latency_ms,
+                ),
+            )
+        }
+        Err(error) => CheckResult::new(
+            if cancel.is_cancelled() || error == "cancelled" {
+                "cancelled"
+            } else if error.contains("timeout") || error.contains("timed out") {
+                "timeout"
+            } else {
+                "error"
+            },
+            format!("代理 HTTP HEAD 请求失败：{error}；未获得完整响应头；未回退直连"),
+        ),
+    }
+}
+
 fn bounded_header(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
     let mut value: String = text
@@ -590,6 +718,205 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    async fn resolved_fixture_proxy(address: SocketAddr) -> crate::proxy::ResolvedProxy {
+        crate::proxy::resolve_proxy(
+            &crate::proxy::ProxyConfig {
+                url: format!("http://{address}"),
+            },
+            None,
+            &CancellationToken::new(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn proxy_tcp_is_numeric_single_tunnel_and_not_target_rtt() {
+        let listener = listener().await;
+        let proxy = resolved_fixture_proxy(listener.local_addr().unwrap()).await;
+        let target: SocketAddr = "10.12.13.14:443".parse().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let headers = read_headers(&mut stream).await;
+            assert!(headers.starts_with(&format!("CONNECT {target} HTTP/1.1\r\n")));
+            stream
+                .write_all(b"HTTP/1.1 200 Connected\r\n\r\n")
+                .await
+                .unwrap();
+            let mut data = Vec::new();
+            stream.read_to_end(&mut data).await.unwrap();
+            assert!(data.is_empty());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        let result = tcp_via_proxy(target, &proxy, &CancellationToken::new()).await;
+        assert_eq!(result.status, "completed", "{}", result.output);
+        assert!(result.output.contains("代理 TCP"));
+        assert!(result.output.contains("隧道协商"));
+        assert!(result.output.contains("不是目标 TCP RTT"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn proxy_tls_uses_the_tunnel_stream_and_original_certificate_identity() {
+        for name in ["diagnostic.test", "wrong.test"] {
+            let listener = listener().await;
+            let proxy = resolved_fixture_proxy(listener.local_addr().unwrap()).await;
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                assert!(
+                    read_headers(&mut stream)
+                        .await
+                        .starts_with("CONNECT 10.12.13.14:443 ")
+                );
+                stream
+                    .write_all(b"HTTP/1.1 200 Connected\r\n\r\n")
+                    .await
+                    .unwrap();
+                if let Ok(mut tls) = acceptor().accept(stream).await {
+                    let mut data = Vec::new();
+                    let _ = tls.read_to_end(&mut data).await;
+                    assert!(data.is_empty());
+                }
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                        .await
+                        .is_err()
+                );
+            });
+            let result = tls_via_proxy_with_config(
+                name,
+                "10.12.13.14:443".parse().unwrap(),
+                &proxy,
+                &CancellationToken::new(),
+                Ok(fixture_config()),
+            )
+            .await;
+            assert_eq!(
+                result.status,
+                if name == "diagnostic.test" {
+                    "completed"
+                } else {
+                    "error"
+                },
+                "{}",
+                result.output
+            );
+            assert!(result.output.contains("代理隧道建立"));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_http_head_is_single_no_redirect_retry_get_or_body() {
+        for status in [
+            "302 Found",
+            "405 Method Not Allowed",
+            "429 Too Many Requests",
+        ] {
+            let listener = listener().await;
+            let proxy = resolved_fixture_proxy(listener.local_addr().unwrap()).await;
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                assert!(
+                    read_headers(&mut stream)
+                        .await
+                        .starts_with("CONNECT 10.12.13.14:80 ")
+                );
+                stream
+                    .write_all(b"HTTP/1.1 200 Connected\r\n\r\n")
+                    .await
+                    .unwrap();
+                let headers = read_headers(&mut stream).await;
+                assert!(
+                    headers.starts_with("HEAD /Case/%2fKeep HTTP/1.1\r\n"),
+                    "{headers}"
+                );
+                assert!(
+                    headers
+                        .to_ascii_lowercase()
+                        .contains("host: original.test\r\n")
+                );
+                stream.write_all(format!("HTTP/1.1 {status}\r\nLocation: http://127.0.0.1/private\r\nContent-Length: 999999\r\n\r\n").as_bytes()).await.unwrap();
+                let mut data = Vec::new();
+                tokio::time::timeout(Duration::from_secs(1), stream.read_to_end(&mut data))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(data.is_empty());
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                        .await
+                        .is_err()
+                );
+            });
+            let result = http_via_proxy(
+                "http://original.test/Case/%2fKeep",
+                "10.12.13.14:80".parse().unwrap(),
+                &proxy,
+                &CancellationToken::new(),
+            )
+            .await;
+            assert_eq!(result.status, "completed", "{}", result.output);
+            assert!(result.output.contains(status));
+            assert!(result.output.contains("http://127.0.0.1/private"));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_http_cancel_and_timeout_close_socket_before_return() {
+        for cancel_it in [true, false] {
+            let listener = listener().await;
+            let proxy = resolved_fixture_proxy(listener.local_addr().unwrap()).await;
+            let (sent, ready) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                read_headers(&mut stream).await;
+                stream
+                    .write_all(b"HTTP/1.1 200 Connected\r\n\r\n")
+                    .await
+                    .unwrap();
+                read_headers(&mut stream).await;
+                sent.send(()).unwrap();
+                let mut data = Vec::new();
+                stream.read_to_end(&mut data).await.unwrap();
+                assert!(data.is_empty());
+            });
+            let cancel = CancellationToken::new();
+            let token = cancel.clone();
+            let task = tokio::spawn(async move {
+                http_via_proxy(
+                    "http://original.test/",
+                    "10.12.13.14:80".parse().unwrap(),
+                    &proxy,
+                    &token,
+                )
+                .await
+            });
+            ready.await.unwrap();
+            if cancel_it {
+                cancel.cancel();
+            } else {
+                tokio::time::pause();
+                tokio::time::advance(Duration::from_secs(11)).await;
+                tokio::time::resume();
+            }
+            assert_eq!(
+                task.await.unwrap().status,
+                if cancel_it { "cancelled" } else { "timeout" }
+            );
+            tokio::time::timeout(Duration::from_secs(1), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     }
 
     #[test]

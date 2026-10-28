@@ -116,6 +116,8 @@ pub fn router(state: App) -> Router {
         )
         .route("/transport.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/transport.js")) }))
         .route("/site-catalog.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/site-catalog.js")) }))
+        .route("/application-catalog.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/application-catalog.js")) }))
+        .route("/application-catalog.css", get(|| async { ([(header::CONTENT_TYPE,"text/css; charset=utf-8")],include_str!("../web/application-catalog.css")) }))
         .route("/network-tools.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/network-tools.js")) }))
         .route("/network-tools.css", get(|| async { ([(header::CONTENT_TYPE,"text/css; charset=utf-8")],include_str!("../web/network-tools.css")) }))
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
@@ -129,6 +131,12 @@ pub fn router(state: App) -> Router {
         .route("/api/state", get(snapshot))
         .route("/api/runs", post(start))
         .route("/api/stop", post(stop))
+        .route("/api/proxy-health", get(proxy_health))
+        .route("/proxy-health.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/proxy-health.js")) }))
+        .route("/proxy-health.css", get(|| async { ([(header::CONTENT_TYPE,"text/css; charset=utf-8")],include_str!("../web/proxy-health.css")) }))
+        .route("/api/proxy-settings", get(proxy_settings).put(save_proxy_settings))
+        .route("/system-settings.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/system-settings.js")) }))
+        .route("/system-settings.css", get(|| async { ([(header::CONTENT_TYPE,"text/css; charset=utf-8")],include_str!("../web/system-settings.css")) }))
         .route("/api/site-catalog", get(site_catalog).put(save_site_catalog))
         .route("/api/network-tools/info", get(network_info))
         .route("/api/network-tools/state", get(network_state))
@@ -140,6 +148,13 @@ pub fn router(state: App) -> Router {
         .route("/api/monitor/heartbeat", post(monitor_heartbeat))
         .route("/api/monitor/stop", post(monitor_stop))
         .route("/api/monitor/pause", post(monitor_pause))
+        .route("/app-shell.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/app-shell.js")) }))
+        .route("/batch-tools.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/batch-tools.js")) }))
+        .route("/batch-tools.css", get(|| async { ([(header::CONTENT_TYPE,"text/css; charset=utf-8")],include_str!("../web/batch-tools.css")) }))
+        .route("/api/catalog-batch/info",get(catalog_batch_info))
+        .route("/api/catalog-batch/start",post(catalog_batch_start))
+        .route("/api/catalog-batch/state",get(catalog_batch_state))
+        .route("/api/catalog-batch/stop",post(catalog_batch_stop))
         .route("/api/batch", post(start_batch))
         .route("/api/batch/state", get(batch_state))
         .route("/api/batch/stop", post(stop_batch))
@@ -157,6 +172,58 @@ pub fn router(state: App) -> Router {
         .layer(DefaultBodyLimit::max(1_048_576))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
+}
+async fn proxy_health(State(s): State<App>) -> Json<Value> {
+    Json(json!(s.service.proxy_health_state()))
+}
+async fn proxy_settings(State(s): State<App>) -> Json<Value> {
+    Json(json!(s.service.proxy_settings()))
+}
+async fn save_proxy_settings(
+    State(s): State<App>,
+    Json(request): Json<crate::proxy_settings::SaveRequest>,
+) -> ApiResult {
+    s.service
+        .save_proxy_settings(request)
+        .await
+        .map(|snapshot| Json(json!(snapshot)))
+        .map_err(error)
+}
+async fn catalog_batch_info(State(s): State<App>) -> Json<Value> {
+    let mut info = s.service.catalog_batch_info().await;
+    info["version"] = json!(env!("CARGO_PKG_VERSION"));
+    info["token"] = json!(s.token);
+    Json(info)
+}
+async fn catalog_batch_start(
+    State(s): State<App>,
+    Json(request): Json<crate::catalog_batch::Request>,
+) -> ApiResult {
+    s.service
+        .start_catalog_batch(request)
+        .await
+        .map(|s| Json(json!(s)))
+        .map_err(error)
+}
+async fn catalog_batch_state(
+    State(s): State<App>,
+    axum::extract::Query(request): axum::extract::Query<crate::catalog_batch::StateRequest>,
+) -> ApiResult {
+    s.service
+        .catalog_batch_state(request)
+        .await
+        .map(|s| Json(json!(s)))
+        .map_err(error)
+}
+async fn catalog_batch_stop(
+    State(s): State<App>,
+    Json(request): Json<crate::catalog_batch::StopRequest>,
+) -> ApiResult {
+    s.service
+        .stop_catalog_batch(request)
+        .await
+        .map(|s| Json(json!(s)))
+        .map_err(error)
 }
 async fn site_catalog(State(s): State<App>) -> Json<Value> {
     Json(json!(s.service.site_catalog()))

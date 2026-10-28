@@ -57,6 +57,7 @@ impl Metrics {
             started_at: chrono::Utc::now().to_rfc3339(),
             elapsed_secs: 0.0,
             config,
+            route: crate::proxy_settings::RouteSnapshot::default(),
             reason: String::new(),
             attempted: 0,
             completed: 0,
@@ -234,6 +235,19 @@ mod tests {
             }],
         )
     }
+    #[test]
+    fn route_defaults_for_metrics_and_legacy_run_json() {
+        let run = m().run;
+        assert_eq!(run.route, crate::proxy_settings::RouteSnapshot::default());
+        let mut value = serde_json::to_value(&run).unwrap();
+        value.as_object_mut().unwrap().remove("route");
+        let restored: Run = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            restored.route,
+            crate::proxy_settings::RouteSnapshot::default()
+        );
+    }
+
     #[test]
     fn http_errors_not_network_failures() {
         let mut m = m();

@@ -1,0 +1,51 @@
+.batch-page {padding:26px}
+.batch-heading {display:flex;justify-content:space-between;align-items:start;gap:16px}
+.batch-modes {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;border:0;padding:0;margin:8px 0 22px;min-width:0}
+.batch-modes .tool-choice span {white-space:normal}
+.batch-layout {display:grid;grid-template-columns:200px minmax(0,1fr);gap:24px;border-top:1px solid #e5e9ef;padding-top:20px}
+.batch-groups-pane {border-right:1px solid #e5e9ef;padding-right:16px;min-width:0}
+#batch-groups {display:grid;gap:5px;max-height:420px;overflow:auto}
+#batch-groups label {display:flex;align-items:start;gap:8px;padding:9px 5px;font-size:13px;overflow-wrap:anywhere}
+#batch-groups input {margin-top:3px;flex-shrink:0}
+.batch-main {min-width:0}
+.batch-selection {font-weight:600;margin:0 0 18px;line-height:1.7}
+.batch-parameters {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:16px 0}
+.batch-parameters label {display:flex;flex-direction:column;gap:7px;font-size:12px;min-width:0}
+.batch-parameters input {width:100%;min-width:0;height:40px;border:1px solid #c8d2df;border-radius:7px;padding:9px;color:#243449}
+.batch-parameters input:disabled {background:#f3f5f7}
+.batch-target-preview {border-top:1px solid #edf0f4;margin-top:20px;padding-top:16px}
+.batch-target-preview summary {cursor:pointer;font-size:13px;color:#356797}
+.batch-targets {padding:0;list-style:none;margin:8px 0}
+.batch-targets li {padding:12px 0;border-bottom:1px solid #edf0f4;overflow-wrap:anywhere}
+.batch-targets strong {font-size:13px}
+.batch-targets select {margin-top:8px;font-size:12px}
+.batch-target-error {color:#a03333;font-size:12px;margin:6px 0}
+.batch-results {border-top:1px solid #e5e9ef;padding-top:20px;margin-top:26px}
+.batch-results h2 {font-size:17px;margin:0}
+#batch-status {font-weight:600;line-height:1.7}
+.batch-result {padding:16px 0;border-bottom:1px solid #e5e9ef;overflow-wrap:anywhere}
+.batch-result-heading {display:flex;justify-content:space-between;gap:12px}
+.batch-result-counts {font-size:12px;line-height:1.8;color:#52667d;margin:8px 0}
+.batch-attempt-list {list-style:none;padding:0;margin:8px 0;max-height:280px;overflow:auto;font-size:12px;line-height:1.8}
+.batch-attempt-list li {border-top:1px solid #edf0f4;padding:8px 0;white-space:pre-wrap}
+.batch-result summary {cursor:pointer;color:#356797;font-size:12px}
+.batch-pager {display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:12px 0;font-size:12px}
+.batch-pager button {font-size:12px;padding:5px 10px;min-height:30px}
+.batch-confirm-text {min-height:0;max-height:330px;font-size:12px;line-height:1.8;margin:12px 0}
+.permit-existing {list-style:none;padding:0;font-size:12px;line-height:1.8}
+.permit-existing li {padding:10px 0;border-bottom:1px solid #edf0f4;white-space:pre-wrap;overflow-wrap:anywhere}
+.permit-mode-checks {display:flex;gap:20px;margin:16px 0}
+#permit-new summary {cursor:pointer;color:#356797}
+#permit-preview h3 {font-size:14px}
+@media(max-width:720px) {
+  .batch-layout {grid-template-columns:minmax(0,1fr);gap:20px}
+  .batch-groups-pane {border-right:0;border-bottom:1px solid #e5e9ef;padding:0 0 16px}
+  #batch-groups {max-height:190px}
+  .batch-parameters {grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:640px) {
+  .batch-page {padding:20px 16px}
+  .batch-modes {gap:5px}
+  .batch-modes .tool-choice span {font-size:12px;padding:8px 4px;min-height:52px}
+  .batch-result-heading {flex-direction:column;gap:5px}
+}

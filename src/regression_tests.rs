@@ -735,6 +735,12 @@ impl ApiFixture {
                 )
                 .unwrap(),
                 site_catalog: crate::site_catalog::Manager::new(data.path(), &[]).unwrap(),
+                proxy_settings: crate::proxy_settings::Manager::new(data.path(), Some(port))
+                    .unwrap(),
+                proxy_health: Arc::new(crate::proxy_health::Manager::new(
+                    Some(port),
+                    shutdown.clone(),
+                )),
                 lists: RwLock::new(vec![site_list("builtin-fixture", true, vec![])]),
                 connection_presets: vec![],
                 permits: RwLock::new(vec![]),
@@ -1027,6 +1033,11 @@ async fn api_write_routes_require_token_same_origin_and_json() {
         ("PUT", "/api/lists", json!({"lists": []})),
         (
             "PUT",
+            "/api/proxy-settings",
+            json!({"expected_revision":0,"profiles":[],"active_id":null}),
+        ),
+        (
+            "PUT",
             "/api/site-catalog",
             json!({"expected_revision":0,"sites":[],"groups":[]}),
         ),
@@ -1088,6 +1099,58 @@ async fn api_write_routes_require_token_same_origin_and_json() {
 }
 
 #[tokio::test]
+async fn proxy_settings_api_is_inert_revision_guarded_and_drives_new_tools() {
+    let f = ApiFixture::new();
+    let response = f
+        .send(
+            Request::builder()
+                .uri("/api/proxy-settings")
+                .header("host", f.host())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_json(response).await["active_id"], Value::Null);
+    assert!(!f.state.data.join("proxy-settings.json").exists());
+    let body = json!({"expected_revision":0,"profiles":[{"id":"fixture","name":"Fixture","url":"socks5://127.0.0.1:1080"}],"active_id":"fixture"});
+    let response = f
+        .send(f.write_request("PUT", "/api/proxy-settings", body.clone()))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_json(response).await["revision"], 1);
+    assert!(f.state.network_state().await.is_none());
+    let response = f
+        .send(f.write_request("PUT", "/api/proxy-settings", body))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let id = uuid::Uuid::new_v4().to_string();
+    let request = crate::network_tools::Request {
+        request_id: id,
+        target: "unresolvable.invalid".into(),
+        tool: crate::network_tools::Tool::Tcp,
+        port: Some(443),
+        udp_dns: None,
+        alpn: None,
+    };
+    let started = f.state.start_network_tool(request.clone()).await.unwrap();
+    assert_eq!(
+        started.route.proxy.as_ref().unwrap().url,
+        "socks5://127.0.0.1:1080"
+    );
+    assert_eq!(started.route.settings_revision, 1);
+    let change = crate::proxy_settings::SaveRequest {
+        expected_revision: 1,
+        profiles: vec![],
+        active_id: None,
+    };
+    assert!(f.state.save_proxy_settings(change.clone()).await.is_err());
+    f.state.stop_network_tool(&started.id).await.unwrap();
+    f.state.shutdown_and_wait().await;
+    assert_eq!(f.state.network_state().await.unwrap().route, started.route);
+}
+
+#[tokio::test]
 async fn catalog_api_is_inert_shared_and_revision_guarded() {
     let f = ApiFixture::new();
     let response = f
@@ -1102,10 +1165,18 @@ async fn catalog_api_is_inert_shared_and_revision_guarded() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response_json(response).await["revision"], 0);
     assert!(!f.state.data.join("site-catalog.json").exists());
-    let mut body = json!({"expected_revision":0,
-        "sites":[{"id":"shared","name":"Shared","address":"example.invalid","port":443}],
-        "groups":[{"id":"one","name":"One","description":"","site_ids":["shared"]},
-                  {"id":"two","name":"Two","description":"","site_ids":["shared"]}]});
+    let old = json!({"expected_revision":0,"sites":[],"groups":[]});
+    assert_eq!(
+        f.send(f.write_request("PUT", "/api/site-catalog", old))
+            .await
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let mut body = json!({"schema_version":2,"expected_revision":0,
+        "sites":[{"id":"shared","name":"Shared","address":"example.invalid","port":443,"transport":"tcp","protocol":"tls","purpose":"auth","alpn":null}],
+        "applications":[{"id":"shared-app","name":"Shared application","category":"custom","provider":"","product":"","aliases":[],"access_type":"desktop","site_ids":["shared"],"reference_rules":[]}],
+        "groups":[{"id":"one","name":"One","description":"","application_ids":["shared-app"]},
+                  {"id":"two","name":"Two","description":"","application_ids":["shared-app"]}]});
     let response = f
         .send(f.write_request("PUT", "/api/site-catalog", body.clone()))
         .await;
@@ -1125,8 +1196,8 @@ async fn catalog_api_is_inert_shared_and_revision_guarded() {
     assert_eq!(saved["sites"].as_array().unwrap().len(), 1);
     assert_eq!(saved["sites"][0]["name"], "Updated once");
     assert_eq!(
-        saved["groups"][0]["site_ids"],
-        saved["groups"][1]["site_ids"]
+        saved["groups"][0]["application_ids"],
+        saved["groups"][1]["application_ids"]
     );
     body["expected_revision"] = json!(2);
     body["sites"][0]["builtin"] = json!(true);
@@ -1229,4 +1300,136 @@ fn csv_quotes_cells_and_neutralizes_formula_prefixes_in_text_columns() {
         assert!(csv.contains("\"\"\"quoted\"\", reason\r\nnext line\""));
         assert!(csv.ends_with("\r\n"));
     }
+}
+
+#[tokio::test]
+async fn catalog_batch_http_guards_info_query_and_cross_module_lifecycle() {
+    use tokio::io::AsyncReadExt;
+    let fixture = ApiFixture::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let service = &fixture.state.service;
+    let catalog = service.site_catalog();
+    let catalog = service
+        .save_site_catalog(crate::site_catalog::SaveRequest {
+            schema_version: 2,
+            expected_revision: catalog.revision,
+            sites: vec![crate::site_catalog::Site {
+                id: "custom-fixture".into(),
+                name: "fixture".into(),
+                address: format!("http://{addr}/"),
+                port: None,
+                transport: crate::site_catalog::Transport::Tcp,
+                protocol: crate::site_catalog::Protocol::Http,
+                purpose: String::new(),
+                alpn: None,
+            }],
+            applications: vec![crate::site_catalog::Application {
+                id: "fixture-app".into(),
+                name: "fixture app".into(),
+                category: crate::site_catalog::ApplicationCategory::Web,
+                provider: String::new(),
+                product: String::new(),
+                aliases: vec![],
+                access_type: "http".into(),
+                site_ids: vec!["custom-fixture".into()],
+                reference_rules: vec![],
+            }],
+            groups: vec![crate::site_catalog::Group {
+                id: "custom-group".into(),
+                name: "fixture".into(),
+                description: String::new(),
+                application_ids: vec!["fixture-app".into()],
+            }],
+        })
+        .await
+        .unwrap();
+    let p = permit("fixture-permit", format!("http://{addr}/"));
+    *service.permits.write().await = vec![p];
+    let response = fixture
+        .send(
+            Request::builder()
+                .uri("/api/catalog-batch/info")
+                .header("host", fixture.host())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let info: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1048576)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(info["token"], fixture.state.token);
+    assert!(info["authorized"][0]["authorization"].is_string());
+    assert_eq!(
+        info["limits"]["max_per_site_connections"],
+        crate::model::MAX_CONCURRENCY
+    );
+    let id = uuid::Uuid::new_v4().to_string();
+    let request = json!({"request_id":id,"catalog_revision":catalog.revision,"group_ids":["custom-group"],"site_ids":[],"mode":"tcp","permit_bindings":[{"site_id":"custom-fixture","permit_id":"fixture-permit"}],"concurrency":1,"connection_limit":1,"queue_capacity":1,"attempts_per_site":2,"start_rate":1,"request_timeout_secs":2,"batch_timeout_secs":10,"per_site_connections":1,"tcp_hold_secs":30,"confirmed_authorized":true});
+    let response = fixture
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/api/catalog-batch/start")
+                .header("host", fixture.host())
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = fixture
+        .send(fixture.write_request("POST", "/api/catalog-batch/start", request.clone()))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (mut stream, _) = listener.accept().await.unwrap();
+    assert!(
+        service
+            .save_site_catalog(crate::site_catalog::SaveRequest {
+                schema_version: 2,
+                expected_revision: catalog.revision,
+                sites: vec![],
+                applications: vec![],
+                groups: vec![]
+            })
+            .await
+            .is_err()
+    );
+    assert!(service.batches.settle().await.is_err());
+    let response = fixture
+        .send(fixture.write_request("POST", "/api/catalog-batch/start", request))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = fixture
+        .send(
+            Request::builder()
+                .uri(format!(
+                    "/api/catalog-batch/state?request_id={}",
+                    uuid::Uuid::new_v4()
+                ))
+                .header("host", fixture.host())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    let unknown: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1048576)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(unknown["accepted"], false);
+    assert!(unknown["snapshot"].is_null());
+    let response = fixture
+        .send(fixture.write_request("POST", "/api/catalog-batch/stop", json!({"request_id":id})))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut byte = [0u8];
+    assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
+    service.batches.settle().await.unwrap();
+    service.shutdown_and_wait().await;
 }

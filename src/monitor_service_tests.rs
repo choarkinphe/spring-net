@@ -171,7 +171,7 @@ async fn proxy_settings_are_inert_canonical_and_secret_free() {
     for url in [
         "http://user:password@localhost:8080",
         "http://localhost:1",
-        "socks5://localhost:8080",
+        "socks5h://localhost:8080",
         "http://localhost:8080/path",
     ] {
         assert!(

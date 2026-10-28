@@ -289,7 +289,10 @@ pub fn validate_permits(
                 control_port,
             )
             .map_err(|e| format!("代理授权路径无效：{e}"))?;
-            let proxy_url = parse_url(&normalized.url)?;
+            // Already strictly validated as an HTTP/SOCKS5 proxy endpoint above.
+            // Keep the target-only HTTP parser unchanged, but apply the same
+            // protected-domain bucket to both proxy protocols.
+            let proxy_url = Url::parse(&normalized.url).map_err(|_| "代理授权 URL 无效")?;
             if !routes.insert(normalized.url)
                 || route.allowed_ips.is_empty()
                 || route.allowed_ips.len() > 64
@@ -441,20 +444,145 @@ pub fn check_fd_budget(concurrency: usize, demo: bool) -> Result<(), String> {
         if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limits) } != 0 {
             return Err("无法读取文件描述符限制".into());
         }
-        let needed = concurrency * if demo { 2 } else { 1 } + 256;
-        if limits.rlim_cur < needed as libc::rlim_t {
-            return Err(format!(
-                "文件描述符软限制为 {}，本配置至少需要 {needed}；请减少并发或由你自行调整系统限制",
-                limits.rlim_cur
-            ));
-        }
+        let opened = open_descriptor_count()?;
+        descriptor_budget(limits.rlim_cur, opened, concurrency, demo)?;
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn descriptor_budget(
+    soft_limit: u64,
+    opened: u64,
+    connections: usize,
+    demo: bool,
+) -> Result<(), String> {
+    let sockets = u64::try_from(connections)
+        .ok()
+        .and_then(|n| n.checked_mul(if demo { 2 } else { 1 }))
+        .ok_or("连接数超出文件描述符预算的计算范围")?;
+    // A bounded safety margin, independent of the requested load. Never change rlimits.
+    let reserve = (soft_limit / 16).clamp(8, 64);
+    let needed = opened
+        .checked_add(sockets)
+        .and_then(|n| n.checked_add(reserve))
+        .ok_or("文件描述符预算溢出")?;
+    if soft_limit != libc::RLIM_INFINITY && needed > soft_limit {
+        return Err(format!(
+            "文件描述符不足：软限制 {soft_limit}，当前已用 {opened}，本轮新增最多 {sockets}，安全余量 {reserve}，至少需要 {needed}；请减少连接数或关闭不需要的程序资源。应用不会修改系统限制"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn open_descriptor_count() -> Result<u64, String> {
+    const MAX_BYTES: usize = 1024 * 1024;
+    let entry_size = std::mem::size_of::<libc::proc_fdinfo>();
+    // SAFETY: querying our own PID with a null output requests the required byte count.
+    let needed = unsafe {
+        libc::proc_pidinfo(
+            libc::getpid(),
+            libc::PROC_PIDLISTFDS,
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if needed <= 0 {
+        return Err(format!(
+            "无法读取本进程文件描述符占用：{}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut capacity = (needed as usize).saturating_add(entry_size * 32);
+    for _ in 0..4 {
+        if capacity > MAX_BYTES {
+            return Err("文件描述符列表超过采样预算，未启动测试".into());
+        }
+        let mut buffer = vec![0u8; capacity];
+        // SAFETY: writable buffer has capacity bytes, bounded below c_int::MAX;
+        // the kernel copies bytes and no typed/aligned Rust references are formed.
+        let written = unsafe {
+            libc::proc_pidinfo(
+                libc::getpid(),
+                libc::PROC_PIDLISTFDS,
+                0,
+                buffer.as_mut_ptr().cast(),
+                capacity as libc::c_int,
+            )
+        };
+        if written <= 0 {
+            return Err(format!(
+                "文件描述符采样失败：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let written = written as usize;
+        if written > capacity || !written.is_multiple_of(entry_size) {
+            return Err("文件描述符采样响应无效，未启动测试".into());
+        }
+        if capacity - written >= entry_size {
+            return Ok((written / entry_size) as u64);
+        }
+        capacity = capacity.saturating_mul(2);
+    }
+    Err("文件描述符列表持续变化，无法可靠采样，请稍后重试".into())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_descriptor_count() -> Result<u64, String> {
+    let path = if cfg!(target_os = "linux") {
+        "/proc/self/fd"
+    } else {
+        "/dev/fd"
+    };
+    // Directory enumeration includes its own descriptor, making this conservative by one.
+    let entries =
+        std::fs::read_dir(path).map_err(|e| format!("无法读取本进程文件描述符占用：{e}"))?;
+    let mut count = 0u64;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("文件描述符采样失败：{e}"))?;
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.parse::<u64>().is_ok())
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_budget_uses_actual_occupancy_not_a_fixed_256_reserve() {
+        assert!(descriptor_budget(256, 40, 2, false).is_ok());
+        assert!(descriptor_budget(256, 238, 2, false).is_ok());
+        let error = descriptor_budget(256, 239, 2, false).unwrap_err();
+        assert!(error.contains("当前已用 239"));
+        assert!(error.contains("安全余量 16"));
+        assert!(descriptor_budget(256, 238, 2, true).is_err());
+        assert!(descriptor_budget(256, 40, usize::MAX, true).is_err());
+        assert!(descriptor_budget(libc::RLIM_INFINITY, 40, 2, false).is_ok());
+        assert!(descriptor_budget(64, 60, 1, false).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_sampling_observes_an_open_process_without_changing_limits() {
+        let count = open_descriptor_count().unwrap();
+        assert!(count > 0);
+        check_fd_budget(2, false).unwrap();
+        let file =
+            std::fs::File::open(env!("CARGO_MANIFEST_DIR").to_owned() + "/Cargo.toml").unwrap();
+        assert!(open_descriptor_count().unwrap() > 0);
+        drop(file);
+    }
     #[tokio::test]
     async fn cancelled_dns_retains_global_slot_until_os_return() {
         static PENDING: AtomicUsize = AtomicUsize::new(0);

@@ -28,7 +28,7 @@
   function validProxy(proxy) {
     if(proxy==null)return true;
     if(typeof proxy!=="object"||Object.keys(proxy).length!==1||typeof proxy.url!=="string")return false;
-    return /^http:\/\/(?:\[[0-9a-f:]+\]|[^\s/:@?#]+):[0-9]+\/?$/i.test(proxy.url);
+    return /^(?:http|socks5):\/\/(?:\[[0-9a-f:]+\]|[^\s/:@?#]+):[0-9]+\/?$/i.test(proxy.url);
   }
   function diagnosticConfig(value) {
     const fields = ["request_id", "target", "port", "tls", "allow_lan"];

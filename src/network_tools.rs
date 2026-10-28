@@ -1,5 +1,8 @@
 //! One deliberately small, bounded Ping/Traceroute task at a time.
-use crate::network_process::{self, OUTPUT_LIMIT, OutputCallback};
+use crate::{
+    network_process::{self, OUTPUT_LIMIT, OutputCallback},
+    proxy_settings::RouteSnapshot,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, ToSocketAddrs},
@@ -24,6 +27,8 @@ pub enum Tool {
     Tcp,
     Tls,
     Http,
+    UdpDns,
+    Quic,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +38,10 @@ pub struct Request {
     pub tool: Tool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udp_dns: Option<crate::udp_dns::Parameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<String>,
 }
 /// Equality includes the effective port and HTTP path, not merely the host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +51,8 @@ struct NormalizedRequest {
     host: String,
     tool: Tool,
     port: Option<u16>,
+    udp_dns: Option<crate::udp_dns::Parameters>,
+    alpn: Option<String>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
@@ -51,6 +62,11 @@ pub struct Snapshot {
     pub target: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub udp_dns: Option<crate::udp_dns::Parameters>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<String>,
+    pub route: RouteSnapshot,
     pub resolved_ip: Option<String>,
     pub status: String,
     pub output: String,
@@ -129,18 +145,33 @@ impl NetworkToolManager {
         duplicate(&state, &request)
     }
     pub async fn start(&self, request: Request) -> Result<Snapshot, String> {
+        self.start_with_route(request, RouteSnapshot::default())
+            .await
+    }
+    /// The service injects the frozen route; it is deliberately absent from Request.
+    pub async fn start_with_route(
+        &self,
+        request: Request,
+        route: RouteSnapshot,
+    ) -> Result<Snapshot, String> {
         let request = normalize(request)?;
         validate_control_port(&request, self.control_port)?;
         let mut state = self.state.lock().await;
         if let Some(snapshot) = duplicate(&state, &request)? {
             return Ok(snapshot);
         }
+        if matches!(request.tool, Tool::UdpDns | Tool::Quic) && route.proxy.is_some() {
+            return Err("当前 HTTP CONNECT / SOCKS5 代理不支持本工具的 UDP 传输；请明确关闭代理后检测，不会自动直连".into());
+        }
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出".into());
         }
-        if state.current.as_ref().is_some_and(|a| {
-            a.shared.lock().unwrap().active() || a.task.as_ref().is_some_and(|t| !t.is_finished())
-        }) {
+        if crate::proxy::proxy_dns_pending() != 0
+            || state.current.as_ref().is_some_and(|a| {
+                a.shared.lock().unwrap().active()
+                    || a.task.as_ref().is_some_and(|t| !t.is_finished())
+            })
+        {
             return Err("网络诊断正在运行、停止或收尾中".into());
         }
         if let Some(task) = state.current.as_mut().and_then(|a| a.task.take()) {
@@ -156,6 +187,12 @@ impl NetworkToolManager {
         if let Ok(ip) = request.host.parse::<IpAddr>() {
             checked_answers(&request, vec![ip], true)?;
         }
+        let route = if matches!(request.tool, Tool::Ping | Tool::Traceroute | Tool::Dns) {
+            route.local()
+        } else {
+            route
+        };
+        let path = route_description(&route);
         let stamp = stamp();
         let snapshot = Snapshot {
             id: uuid::Uuid::new_v4().to_string(),
@@ -163,10 +200,13 @@ impl NetworkToolManager {
             tool: request.tool,
             target: request.target.clone(),
             port: request.port,
+            udp_dns: request.udp_dns.clone(),
+            alpn: request.alpn.clone(),
+            route: route.clone(),
             resolved_ip: None,
             status: "resolving".into(),
             output: String::new(),
-            summary: "正在解析目标地址；尚未发送探测".into(),
+            summary: format!("{path}；正在本机解析目标地址；尚未发送探测"),
             exit_code: None,
             started_at: stamp.clone(),
             updated_at: stamp,
@@ -182,6 +222,7 @@ impl NetworkToolManager {
             self.shutdown.clone(),
             self.resolver.clone(),
             self.dns_budget,
+            (route, self.control_port),
         ));
         state.last_start = Some(now);
         state.current = Some(Active {
@@ -211,7 +252,10 @@ impl NetworkToolManager {
             if s.status != "draining" {
                 s.status = "stopping".into();
             }
-            s.summary = "正在停止；等待子进程回收或系统 DNS 收尾".into();
+            s.summary = format!(
+                "{}；正在停止；等待子进程回收或系统 DNS 收尾",
+                route_description(&s.route)
+            );
             s.updated_at = stamp();
             active.cancel.cancel();
         }
@@ -220,6 +264,9 @@ impl NetworkToolManager {
     /// Admission barrier for the other service managers. A terminal snapshot
     /// alone does not admit work until its worker has actually returned.
     pub async fn settle(&self) -> Result<(), String> {
+        if crate::proxy::proxy_dns_pending() != 0 {
+            return Err("代理系统 DNS 正在收尾中".into());
+        }
         let mut state = self.state.lock().await;
         if let Some(active) = state.current.as_mut() {
             if active.shared.lock().unwrap().active()
@@ -234,6 +281,7 @@ impl NetworkToolManager {
         Ok(())
     }
     pub async fn shutdown_and_wait(&self) {
+        let dns_deadline = Instant::now() + Duration::from_secs(2);
         self.shutdown.cancel();
         let task = {
             let mut state = self.state.lock().await;
@@ -247,6 +295,14 @@ impl NetworkToolManager {
             && let Err(error) = task.await
         {
             eprintln!("network tool shutdown: {error}");
+        }
+        if tokio::time::timeout_at(dns_deadline, wait_proxy_dns())
+            .await
+            .is_err()
+        {
+            eprintln!(
+                "network tool shutdown: 退出等待 2 秒后代理系统 DNS 仍未结束；未取消 OS 解析线程"
+            );
         }
     }
 }
@@ -277,12 +333,55 @@ fn update(shared: &Shared, f: impl FnOnce(&mut Snapshot)) {
     f(&mut s);
     s.updated_at = stamp();
 }
+fn route_description(route: &RouteSnapshot) -> String {
+    if route.local_direct {
+        "本机直连 / 不经过代理；目标使用本机系统解析".into()
+    } else if let Some(proxy) = &route.proxy {
+        format!("代理路径 {}；目标使用本机系统解析", proxy.url)
+    } else {
+        "直连路径；目标使用本机系统解析".into()
+    }
+}
+fn routed_output(route: &RouteSnapshot, output: &str) -> String {
+    let prefix = format!("{}\n", route_description(route));
+    if output.starts_with(&prefix) {
+        network_process::bounded_text(output.as_bytes())
+    } else {
+        network_process::bounded_text(format!("{prefix}{output}").as_bytes())
+    }
+}
 fn finish(shared: &Shared, status: &str, summary: String) {
     update(shared, |s| {
         s.status = status.into();
-        s.summary = summary;
+        s.summary = format!("{}；{summary}", route_description(&s.route));
+        if !s.output.is_empty() {
+            s.output = routed_output(&s.route, &s.output);
+        }
         s.finished_at = Some(stamp());
     });
+}
+
+async fn wait_proxy_dns() {
+    while crate::proxy::proxy_dns_pending() != 0 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn drain_proxy_dns(shared: &Shared, shutdown: &CancellationToken) -> bool {
+    if crate::proxy::proxy_dns_pending() == 0 {
+        return true;
+    }
+    update(shared, |s| {
+        s.status = "draining".into();
+        s.summary = format!(
+            "{}；等待不可中断的代理系统 DNS 收尾（丢弃迟到结果，未回退直连）",
+            route_description(&s.route),
+        );
+    });
+    tokio::select! {
+        _ = wait_proxy_dns() => true,
+        _ = shutdown.cancelled() => tokio::time::timeout(Duration::from_secs(2), wait_proxy_dns()).await.is_ok(),
+    }
 }
 
 fn normalize(request: Request) -> Result<NormalizedRequest, String> {
@@ -295,6 +394,32 @@ fn normalize(request: Request) -> Result<NormalizedRequest, String> {
     {
         return Err("request_id 须为 1–128 位 ASCII 字母、数字或 - _ .".into());
     }
+    let udp_dns = if request.tool == Tool::UdpDns {
+        Some(
+            request
+                .udp_dns
+                .clone()
+                .ok_or("UDP DNS 必须指定查询名和 A/AAAA 类型")?
+                .normalize()?,
+        )
+    } else {
+        if request.udp_dns.is_some() {
+            return Err("仅 UDP DNS 接受查询参数".into());
+        }
+        None
+    };
+    let alpn = if request.tool == Tool::Quic {
+        let value = request.alpn.as_ref().ok_or("QUIC 必须明确填写 ALPN")?;
+        if value.is_empty() || value.len() > 255 || !value.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err("ALPN 必须为单个 1–255 字节可见 ASCII 标识".into());
+        }
+        Some(value.clone())
+    } else {
+        if request.alpn.is_some() {
+            return Err("仅 QUIC 接受 ALPN".into());
+        }
+        None
+    };
     let input = request.target.trim();
     if input.is_empty()
         || input.len() > 2048
@@ -305,12 +430,20 @@ fn normalize(request: Request) -> Result<NormalizedRequest, String> {
     if request.port == Some(0) {
         return Err("端口必须为 1–65535".into());
     }
-    if request.port.is_some() && !matches!(request.tool, Tool::Tcp | Tool::Tls) {
-        return Err("仅 TCP/TLS 接受单独端口字段".into());
+    if request.port.is_some()
+        && !matches!(
+            request.tool,
+            Tool::Tcp | Tool::Tls | Tool::UdpDns | Tool::Quic
+        )
+    {
+        return Err("仅 TCP/TLS/UDP DNS/QUIC 接受单独端口字段".into());
     }
     let mut full_url = None;
     let mut url_port = None;
     let host = if input.contains("://") {
+        if matches!(request.tool, Tool::UdpDns | Tool::Quic) {
+            return Err("UDP DNS / QUIC 请填写单个主机，协议参数和端口分别填写".into());
+        }
         let url = Url::parse(input).map_err(|_| "HTTP(S) 网址格式无效")?;
         if !matches!(url.scheme(), "http" | "https")
             || !url.username().is_empty()
@@ -399,6 +532,8 @@ fn normalize(request: Request) -> Result<NormalizedRequest, String> {
                     .ok_or("TCP 必须填写端口或提供含显式端口的网址")?,
             )
         }
+        Tool::UdpDns => Some(request.port.unwrap_or(53)),
+        Tool::Quic => Some(request.port.ok_or("QUIC 必须明确填写端口")?),
         Tool::Http => Some(
             full_url
                 .as_ref()
@@ -427,6 +562,8 @@ fn normalize(request: Request) -> Result<NormalizedRequest, String> {
         host,
         tool: request.tool,
         port,
+        udp_dns,
+        alpn,
     };
     if let Ok(ip) = normalized.host.parse() {
         checked_answers(&normalized, vec![ip], true)?;
@@ -665,7 +802,9 @@ async fn execute(
     shutdown: CancellationToken,
     resolver: Resolver,
     dns_budget: Duration,
+    route_options: (RouteSnapshot, Option<u16>),
 ) {
+    let (route, control_port) = route_options;
     if cancel.is_cancelled() {
         finish(&shared, "cancelled", "已停止；未发送探测".into());
         return;
@@ -724,6 +863,63 @@ async fn execute(
         return;
     }
     let ip = addresses[0];
+    if matches!(request.tool, Tool::UdpDns | Tool::Quic) {
+        if route.proxy.is_some() {
+            finish(
+                &shared,
+                "error",
+                "当前代理不支持 UDP DNS / QUIC；请明确关闭代理后检测，不会自动直连".into(),
+            );
+            return;
+        }
+        if request.tool == Tool::UdpDns && request.udp_dns.is_none() {
+            finish(&shared, "error", "UDP DNS 查询参数缺失".into());
+            return;
+        }
+        if request.tool == Tool::Quic && request.alpn.is_none() {
+            finish(&shared, "error", "QUIC ALPN 缺失".into());
+            return;
+        }
+        let address =
+            std::net::SocketAddr::new(ip, request.port.expect("validated UDP protocol port"));
+        update(&shared, |s| {
+            s.resolved_ip = Some(ip.to_string());
+            if s.status != "stopping" {
+                s.status = "running".into();
+            }
+        });
+        let result = match request.tool {
+            Tool::UdpDns => {
+                crate::udp_dns::check(address, request.udp_dns.as_ref().unwrap(), &cancel).await
+            }
+            Tool::Quic => {
+                crate::quic_check::check(
+                    &request.host,
+                    address,
+                    request.alpn.as_deref().unwrap(),
+                    &cancel,
+                )
+                .await
+            }
+            _ => unreachable!(),
+        };
+        update(&shared, |s| {
+            s.output = routed_output(
+                &s.route,
+                &network_process::bounded_text(result.output.as_bytes()),
+            );
+        });
+        finish(
+            &shared,
+            result.status,
+            format!(
+                "{}；固定服务器 {address}；另有 {} 个解析地址未测试，无回退",
+                result.summary,
+                addresses.len() - 1
+            ),
+        );
+        return;
+    }
     if matches!(request.tool, Tool::Tcp | Tool::Tls | Tool::Http) {
         update(&shared, |s| {
             s.resolved_ip = Some(ip.to_string());
@@ -733,10 +929,53 @@ async fn execute(
         });
         let address =
             std::net::SocketAddr::new(ip, request.port.expect("normalized connection port"));
-        let result = match request.tool {
-            Tool::Tcp => crate::network_checks::tcp(address, &cancel).await,
-            Tool::Tls => crate::network_checks::tls(&request.host, address, &cancel).await,
-            Tool::Http => {
+        // Target DNS remains local and all answers were checked above. Resolve
+        // the proxy once only after target policy, and keep that endpoint pinned.
+        let proxy = if let Some(config) = route.proxy.as_ref() {
+            match crate::proxy::resolve_proxy(config, control_port, &cancel, dns_budget).await {
+                Ok(proxy) => Some(proxy),
+                Err(error) => {
+                    let status = match &error {
+                        crate::proxy::ProxyError::Cancelled => "cancelled",
+                        crate::proxy::ProxyError::Timeout => "timeout",
+                        _ => "error",
+                    };
+                    let drained = drain_proxy_dns(&shared, &shutdown).await;
+                    finish(
+                        &shared,
+                        if cancel.is_cancelled() {
+                            "cancelled"
+                        } else {
+                            status
+                        },
+                        if drained {
+                            format!("代理地址解析失败：{error}；未发送目标探测，未回退直连")
+                        } else {
+                            format!(
+                                "代理地址解析失败：{error}；退出等待 2 秒后系统 DNS 仍未结束；未取消线程，未发送目标探测"
+                            )
+                        },
+                    );
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let result = match (request.tool, proxy.as_ref()) {
+            (Tool::Tcp, Some(proxy)) => {
+                crate::network_checks::tcp_via_proxy(address, proxy, &cancel).await
+            }
+            (Tool::Tls, Some(proxy)) => {
+                crate::network_checks::tls_via_proxy(&request.host, address, proxy, &cancel).await
+            }
+            (Tool::Http, Some(proxy)) => {
+                crate::network_checks::http_via_proxy(&request.target, address, proxy, &cancel)
+                    .await
+            }
+            (Tool::Tcp, None) => crate::network_checks::tcp(address, &cancel).await,
+            (Tool::Tls, None) => crate::network_checks::tls(&request.host, address, &cancel).await,
+            (Tool::Http, None) => {
                 crate::network_checks::http(&request.target, &request.host, address, &cancel).await
             }
             _ => unreachable!(),
@@ -766,7 +1005,7 @@ async fn execute(
     );
     update(&shared, |s| {
         s.resolved_ip = Some(ip.to_string());
-        s.summary = limitation.clone();
+        s.summary = format!("{}；{limitation}", route_description(&s.route));
     });
     let command = match request.tool {
         Tool::Ping => ping_command(ip),
@@ -797,7 +1036,7 @@ async fn execute(
         let remaining = OUTPUT_LIMIT.saturating_sub(bytes.len());
         bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
         update(&stream_shared, |s| {
-            s.output = network_process::bounded_text(&bytes)
+            s.output = routed_output(&s.route, &network_process::bounded_text(&bytes))
         });
     });
     let budget = Duration::from_secs(if request.tool == Tool::Ping { 10 } else { 30 });
@@ -942,6 +1181,8 @@ mod tests {
             target: target.into(),
             tool: Tool::Ping,
             port: None,
+            udp_dns: None,
+            alpn: None,
         }
     }
     #[test]
@@ -1099,6 +1340,73 @@ mod tests {
         assert!(validate_control_port(&control, Some(8199)).is_err());
         assert!(validate_control_port(&control, Some(8200)).is_ok());
         assert!(validate_control_port(&control, None).is_ok());
+    }
+    #[test]
+    fn new_protocol_parameters_are_strict_and_part_of_request_identity() {
+        let dns = serde_json::json!({"request_id":"new-dns","target":"10.0.0.53","tool":"udp_dns","udp_dns":{"query_name":"EXAMPLE.invalid.","record_type":"A"}});
+        let normalized = normalize(serde_json::from_value(dns.clone()).unwrap()).unwrap();
+        assert_eq!(normalized.port, Some(53));
+        assert_eq!(
+            normalized.udp_dns.as_ref().unwrap().query_name,
+            "example.invalid"
+        );
+        let mut other = dns.clone();
+        other["udp_dns"]["record_type"] = serde_json::json!("AAAA");
+        assert_ne!(
+            normalized,
+            normalize(serde_json::from_value(other).unwrap()).unwrap()
+        );
+        let q = serde_json::json!({"request_id":"new-quic","target":"10.0.0.1","tool":"quic","port":443,"alpn":"h3"});
+        assert_eq!(
+            normalize(serde_json::from_value(q.clone()).unwrap())
+                .unwrap()
+                .alpn
+                .as_deref(),
+            Some("h3")
+        );
+        for mut invalid in [dns.clone(), q.clone()] {
+            invalid["tool"] = serde_json::json!("tcp");
+            assert!(normalize(serde_json::from_value(invalid).unwrap()).is_err());
+        }
+        for tool in ["udp_dns", "quic"] {
+            assert!(
+                normalize(
+                    serde_json::from_value(
+                        serde_json::json!({"request_id":"missing","target":"10.0.0.1","tool":tool})
+                    )
+                    .unwrap()
+                )
+                .is_err()
+            );
+        }
+        let mut unsafe_q = q;
+        unsafe_q["target"] = serde_json::json!("127.0.0.1");
+        assert!(normalize(serde_json::from_value(unsafe_q).unwrap()).is_err());
+        assert!(validate_control_port(&normalized, Some(53)).is_err());
+    }
+    #[tokio::test]
+    async fn udp_protocols_refuse_proxy_before_resolution() {
+        let mut manager = NetworkToolManager::new(CancellationToken::new());
+        manager.resolver = Arc::new(|_| panic!("proxy UDP refusal must occur before target DNS"));
+        let route = RouteSnapshot {
+            proxy: Some(crate::proxy::ProxyConfig {
+                url: "socks5://127.0.0.1:1080".into(),
+            }),
+            ..RouteSnapshot::default()
+        };
+        for request in [
+            serde_json::json!({"request_id":"udp-proxy","target":"example.invalid","tool":"udp_dns","udp_dns":{"query_name":"example.invalid","record_type":"A"}}),
+            serde_json::json!({"request_id":"quic-proxy","target":"example.invalid","tool":"quic","port":443,"alpn":"h3"}),
+        ] {
+            assert!(
+                manager
+                    .start_with_route(serde_json::from_value(request).unwrap(), route.clone())
+                    .await
+                    .unwrap_err()
+                    .contains("不支持")
+            );
+        }
+        assert!(manager.snapshot().await.is_none());
     }
     #[tokio::test]
     async fn actual_control_port_is_blocked_before_any_resolution() {
@@ -1344,6 +1652,190 @@ mod tests {
         assert!(manager.stop("stale-id").await.is_err());
         manager.shutdown_and_wait().await;
     }
+    fn proxy_route() -> RouteSnapshot {
+        RouteSnapshot {
+            settings_revision: 42,
+            profile_id: Some("fixture-proxy".into()),
+            profile_name: Some("Fixture proxy".into()),
+            proxy: Some(crate::proxy::ProxyConfig {
+                url: "http://127.0.0.1:1".into(),
+            }),
+            local_direct: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn route_is_frozen_and_not_part_of_original_request_idempotency() {
+        let mut manager = NetworkToolManager::new(CancellationToken::new());
+        manager.resolver = Arc::new(|_| Err("fixture DNS error".into()));
+        let request = tool_req(Tool::Tcp, "example.test", Some(443));
+        let route = proxy_route();
+        let first = manager
+            .start_with_route(request.clone(), route.clone())
+            .await
+            .unwrap();
+        assert_eq!(first.route, route);
+        let duplicate = manager
+            .start_with_route(request.clone(), RouteSnapshot::default())
+            .await
+            .unwrap();
+        assert_eq!(duplicate.id, first.id);
+        assert_eq!(duplicate.route, route);
+        let done = wait_terminal(&manager).await;
+        assert_eq!(done.status, "error");
+        let original = manager.existing_request(&request).await.unwrap().unwrap();
+        assert_eq!(original.route, route);
+        assert_eq!(original.id, first.id);
+        assert!(original.summary.contains("代理路径"));
+        assert!(
+            serde_json::from_value::<Request>(serde_json::json!({
+                "request_id":"x", "target":"example.test", "tool":"tcp", "port":443,
+                "proxy":{"url":"http://127.0.0.1:8080"}
+            }))
+            .is_err()
+        );
+        manager.shutdown_and_wait().await;
+    }
+
+    #[tokio::test]
+    async fn local_tools_clear_proxy_and_profile_but_preserve_settings_revision() {
+        for tool in [Tool::Ping, Tool::Traceroute, Tool::Dns] {
+            let mut manager = NetworkToolManager::new(CancellationToken::new());
+            // Avoid invoking a real process or DNS. The accepted snapshot still
+            // has to describe the local exception even if resolution fails.
+            manager.resolver = Arc::new(|_| Err("fixture DNS error".into()));
+            let first = manager
+                .start_with_route(tool_req(tool, "example.test", None), proxy_route())
+                .await
+                .unwrap();
+            assert!(first.route.local_direct);
+            assert_eq!(first.route.settings_revision, 42);
+            assert!(first.route.proxy.is_none());
+            assert!(first.route.profile_id.is_none());
+            assert!(first.route.profile_name.is_none());
+            assert!(first.summary.contains("本机直连 / 不经过代理"));
+            let done = wait_terminal(&manager).await;
+            assert!(done.summary.contains("本机直连 / 不经过代理"));
+            manager.shutdown_and_wait().await;
+        }
+        let manager = NetworkToolManager::new(CancellationToken::new());
+        manager
+            .start_with_route(tool_req(Tool::Dns, "127.0.0.1", None), proxy_route())
+            .await
+            .unwrap();
+        let done = wait_terminal(&manager).await;
+        assert!(done.output.starts_with("本机直连 / 不经过代理"));
+        manager.shutdown_and_wait().await;
+    }
+
+    #[tokio::test]
+    async fn manager_uses_frozen_proxy_and_first_checked_target_without_reresolution() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut route = proxy_route();
+        route.proxy.as_mut().unwrap().url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                headers.push(stream.read_u8().await.unwrap());
+                assert!(headers.len() < 16384);
+            }
+            assert!(
+                String::from_utf8(headers)
+                    .unwrap()
+                    .starts_with("CONNECT 10.0.0.1:443 HTTP/1.1\r\n")
+            );
+            stream
+                .write_all(b"HTTP/1.1 200 Connected\r\n\r\n")
+                .await
+                .unwrap();
+            let mut data = Vec::new();
+            stream.read_to_end(&mut data).await.unwrap();
+            assert!(data.is_empty());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        let mut manager = NetworkToolManager::new(CancellationToken::new());
+        manager.resolver = Arc::new(move |host| {
+            assert_eq!(host, "example.test");
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![
+                "10.0.0.1".parse().unwrap(),
+                "10.0.0.2".parse().unwrap(),
+            ])
+        });
+        manager
+            .start_with_route(
+                tool_req(Tool::Tcp, "example.test", Some(443)),
+                route.clone(),
+            )
+            .await
+            .unwrap();
+        let done = wait_terminal(&manager).await;
+        assert_eq!(done.status, "completed", "{}", done.summary);
+        assert_eq!(done.route, route);
+        assert_eq!(done.resolved_ip.as_deref(), Some("10.0.0.1"));
+        assert!(done.summary.contains("另有 1 个 DNS 地址未测试，无回退"));
+        assert!(done.output.contains("不是目标 TCP RTT"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        server.await.unwrap();
+        manager.shutdown_and_wait().await;
+    }
+
+    #[tokio::test]
+    async fn target_policy_failure_never_touches_proxy_and_control_port_is_checked() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut route = proxy_route();
+        route.proxy.as_mut().unwrap().url = format!("http://{address}");
+        let mut manager = NetworkToolManager::new(CancellationToken::new());
+        manager.resolver = Arc::new(|_| {
+            Ok(vec![
+                "10.0.0.1".parse().unwrap(),
+                "127.0.0.1".parse().unwrap(),
+            ])
+        });
+        manager
+            .start_with_route(
+                tool_req(Tool::Tcp, "example.test", Some(443)),
+                route.clone(),
+            )
+            .await
+            .unwrap();
+        let done = wait_terminal(&manager).await;
+        assert_eq!(done.status, "error");
+        assert!(done.resolved_ip.is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                .await
+                .is_err()
+        );
+        manager.shutdown_and_wait().await;
+
+        let manager = NetworkToolManager::new(CancellationToken::new())
+            .with_control_port(Some(address.port()));
+        manager
+            .start_with_route(tool_req(Tool::Tcp, "10.0.0.1", Some(443)), route)
+            .await
+            .unwrap();
+        let done = wait_terminal(&manager).await;
+        assert_eq!(done.status, "error");
+        assert!(done.summary.contains("代理地址解析失败"));
+        assert!(done.summary.contains("未回退直连"));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                .await
+                .is_err()
+        );
+        manager.shutdown_and_wait().await;
+    }
+
     #[tokio::test]
     async fn dns_cancel_drains_before_terminal_or_new_admission() {
         let mut manager = NetworkToolManager::new(CancellationToken::new());

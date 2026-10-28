@@ -46,7 +46,7 @@ async fn probe_with_config(
     // owned stream moves into TLS; there is no domain re-resolution or fallback.
     let stream = if let Some(proxy) = proxy {
         let observations = json!({
-            "method":"explicit HTTP CONNECT",
+            "method":match proxy.protocol() { crate::proxy::ProxyProtocol::Http => "explicit HTTP CONNECT", crate::proxy::ProxyProtocol::Socks5 => "explicit SOCKS5 CONNECT" },
             "target_addr":address,
             "proxy_addresses":proxy.addresses(),
             "target_tcp_independently_observed":false,
@@ -87,6 +87,9 @@ async fn probe_with_config(
                         | ProxyError::HeaderTooLarge
                         | ProxyError::AuthenticationRequired
                         | ProxyError::Rejected(_)
+                        | ProxyError::Socks5Protocol
+                        | ProxyError::Socks5AuthenticationRequired
+                        | ProxyError::Socks5Rejected(_)
                 ) {
                     observations["proxy_tcp"] = json!({"status":"success","elapsed_ms":null});
                     observations["connect"] = json!({"status":"error"});

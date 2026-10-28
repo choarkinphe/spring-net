@@ -1,4 +1,4 @@
-//! Explicit, unauthenticated HTTP CONNECT transport. Target authorization and
+//! Explicit, unauthenticated HTTP CONNECT / SOCKS5 transport. Target authorization and
 //! TLS hostname verification remain the caller's responsibility.
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,12 +12,33 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_util::sync::CancellationToken;
-use url::Url;
+use url::Host;
 
 const MAX_HEADER: usize = 16 * 1024;
 const MAX_ADDRESSES: usize = 64;
 const MAX_PENDING_PROXY_DNS: usize = 2;
 static PROXY_DNS_PENDING: AtomicUsize = AtomicUsize::new(0);
+// Background health DNS must never consume foreground admission slots.
+static HEALTH_DNS_PENDING: AtomicUsize = AtomicUsize::new(0);
+
+pub fn health_dns_pending() -> usize {
+    HEALTH_DNS_PENDING.load(Ordering::Acquire)
+}
+
+struct HealthDnsPendingGuard;
+impl HealthDnsPendingGuard {
+    fn acquire() -> Result<Self, ProxyError> {
+        HEALTH_DNS_PENDING
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self)
+            .map_err(|_| ProxyError::Resolution)
+    }
+}
+impl Drop for HealthDnsPendingGuard {
+    fn drop(&mut self) {
+        HEALTH_DNS_PENDING.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 /// Number of proxy DNS lookups submitted to the OS resolver and not yet returned.
 pub fn proxy_dns_pending() -> usize {
@@ -47,6 +68,20 @@ pub struct ProxyConfig {
     pub url: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxyProtocol {
+    Http,
+    Socks5,
+}
+impl ProxyProtocol {
+    fn scheme(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Socks5 => "socks5",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ProxyError {
     InvalidConfig,
@@ -57,13 +92,16 @@ pub enum ProxyError {
     HeaderTooLarge,
     AuthenticationRequired,
     Rejected(u16),
+    Socks5Protocol,
+    Socks5AuthenticationRequired,
+    Socks5Rejected(u8),
     Cancelled,
     Timeout,
 }
 impl fmt::Display for ProxyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidConfig => write!(f, "invalid explicit HTTP proxy endpoint"),
+            Self::InvalidConfig => write!(f, "invalid explicit HTTP/SOCKS5 proxy endpoint"),
             Self::ForbiddenAddress => write!(f, "proxy address or port is forbidden"),
             Self::Resolution => write!(
                 f,
@@ -77,6 +115,14 @@ impl fmt::Display for ProxyError {
                 "proxy authentication required (407); authentication is not supported"
             ),
             Self::Rejected(code) => write!(f, "proxy rejected CONNECT with HTTP {code}"),
+            Self::Socks5Protocol => write!(f, "invalid or incomplete SOCKS5 proxy response"),
+            Self::Socks5AuthenticationRequired => write!(
+                f,
+                "SOCKS5 proxy refused NOAUTH; authentication is not supported"
+            ),
+            Self::Socks5Rejected(code) => {
+                write!(f, "SOCKS5 proxy rejected CONNECT with REP {code}")
+            }
             Self::Cancelled => write!(f, "proxy operation cancelled"),
             Self::Timeout => write!(f, "proxy operation timed out"),
         }
@@ -88,9 +134,14 @@ impl std::error::Error for ProxyError {}
 /// Callers enforcing a proxy permit must validate *every* address against it.
 #[derive(Clone, Debug)]
 pub struct ResolvedProxy {
+    protocol: ProxyProtocol,
     addresses: Vec<SocketAddr>,
 }
 impl ResolvedProxy {
+    pub fn protocol(&self) -> ProxyProtocol {
+        self.protocol
+    }
+
     pub fn addresses(&self) -> &[SocketAddr] {
         &self.addresses
     }
@@ -105,7 +156,10 @@ pub struct ProxyTunnel {
     pub tunnel_duration: Duration,
 }
 
-fn endpoint(config: &ProxyConfig, control_port: Option<u16>) -> Result<(String, u16), ProxyError> {
+fn endpoint(
+    config: &ProxyConfig,
+    control_port: Option<u16>,
+) -> Result<(ProxyProtocol, String, u16), ProxyError> {
     let raw = &config.url;
     if raw.len() > 2048
         || raw.chars().any(|c| c.is_control() || c.is_whitespace())
@@ -113,9 +167,13 @@ fn endpoint(config: &ProxyConfig, control_port: Option<u16>) -> Result<(String, 
     {
         return Err(ProxyError::InvalidConfig);
     }
-    let rest = raw
-        .strip_prefix("http://")
-        .ok_or(ProxyError::InvalidConfig)?;
+    let (protocol, rest) = if let Some(rest) = raw.strip_prefix("http://") {
+        (ProxyProtocol::Http, rest)
+    } else if let Some(rest) = raw.strip_prefix("socks5://") {
+        (ProxyProtocol::Socks5, rest)
+    } else {
+        return Err(ProxyError::InvalidConfig);
+    };
     let authority = rest.strip_suffix('/').unwrap_or(rest);
     if authority.is_empty() || authority.contains(['/', '?', '#', '@']) {
         return Err(ProxyError::InvalidConfig);
@@ -143,15 +201,38 @@ fn endpoint(config: &ProxyConfig, control_port: Option<u16>) -> Result<(String, 
     if Some(port) == control_port {
         return Err(ProxyError::ForbiddenAddress);
     }
-    let parsed = Url::parse(raw).map_err(|_| ProxyError::InvalidConfig)?;
-    let host = parsed
-        .host_str()
-        .ok_or(ProxyError::InvalidConfig)?
-        .trim_matches(['[', ']']);
-    if host.is_empty() || host.ends_with('.') {
+    // Use the same host parser for both schemes: URL treats SOCKS as a
+    // non-special scheme and would otherwise leave case / IP syntax opaque.
+    // Never accept percent escapes or browser-style ambiguous IPv4 spellings.
+    if host.contains('%') {
         return Err(ProxyError::InvalidConfig);
     }
-    Ok((host.to_owned(), port))
+    let host = match Host::parse(host).map_err(|_| ProxyError::InvalidConfig)? {
+        Host::Ipv4(ip) => {
+            if host != ip.to_string() {
+                return Err(ProxyError::InvalidConfig);
+            }
+            ip.to_string()
+        }
+        Host::Ipv6(ip) => ip.to_string(),
+        Host::Domain(domain) => {
+            if domain.len() > 253
+                || domain.split('.').any(|label| {
+                    label.is_empty()
+                        || label.len() > 63
+                        || label.starts_with('-')
+                        || label.ends_with('-')
+                        || !label
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                })
+            {
+                return Err(ProxyError::InvalidConfig);
+            }
+            domain
+        }
+    };
+    Ok((protocol, host, port))
 }
 
 /// Validate and normalize configuration without DNS or network traffic.
@@ -159,14 +240,14 @@ pub fn normalize_proxy_config(
     config: &ProxyConfig,
     control_port: Option<u16>,
 ) -> Result<ProxyConfig, ProxyError> {
-    let (host, port) = endpoint(config, control_port)?;
+    let (protocol, host, port) = endpoint(config, control_port)?;
     let host = if host.parse::<std::net::Ipv6Addr>().is_ok() {
         format!("[{host}]")
     } else {
         host
     };
     Ok(ProxyConfig {
-        url: format!("http://{host}:{port}"),
+        url: format!("{}://{host}:{port}", protocol.scheme()),
     })
 }
 
@@ -193,6 +274,7 @@ fn allowed_proxy_ip(ip: IpAddr) -> bool {
 fn validate_answers(
     addrs: impl IntoIterator<Item = SocketAddr>,
     port: u16,
+    protocol: ProxyProtocol,
 ) -> Result<ResolvedProxy, ProxyError> {
     let mut result = Vec::new();
     let mut count = 0;
@@ -213,7 +295,10 @@ fn validate_answers(
     if result.is_empty() {
         return Err(ProxyError::Resolution);
     }
-    Ok(ResolvedProxy { addresses: result })
+    Ok(ResolvedProxy {
+        protocol,
+        addresses: result,
+    })
 }
 async fn bounded<T>(
     cancel: &CancellationToken,
@@ -233,27 +318,102 @@ pub async fn resolve_proxy(
     cancel: &CancellationToken,
     timeout: Duration,
 ) -> Result<ResolvedProxy, ProxyError> {
-    let (host, port) = endpoint(config, control_port)?;
+    let (protocol, host, port) = endpoint(config, control_port)?;
+    resolve_endpoint(protocol, host, port, cancel, timeout, false).await
+}
+
+/// Same endpoint and all-answer policy as foreground resolution, with an isolated
+/// single OS lookup slot. Cancelling the caller never releases an OS thread's slot.
+pub async fn resolve_proxy_health(
+    config: &ProxyConfig,
+    control_port: Option<u16>,
+    cancel: &CancellationToken,
+    timeout: Duration,
+) -> Result<ResolvedProxy, ProxyError> {
+    let (protocol, host, port) = endpoint(config, control_port)?;
+    resolve_endpoint(protocol, host, port, cancel, timeout, true).await
+}
+
+async fn resolve_endpoint(
+    protocol: ProxyProtocol,
+    host: String,
+    port: u16,
+    cancel: &CancellationToken,
+    timeout: Duration,
+    health: bool,
+) -> Result<ResolvedProxy, ProxyError> {
     bounded(cancel, timeout, async move {
         if let Ok(ip) = host.parse::<IpAddr>() {
-            return validate_answers([SocketAddr::new(ip, port)], port);
+            return validate_answers([SocketAddr::new(ip, port)], port, protocol);
         }
-        // Hold the admission slot inside the blocking job, even if the caller
-        // times out or drops its future. OS DNS cannot be cancelled reliably.
-        let guard = ProxyDnsPendingGuard::acquire()?;
+        // Both guards are moved into the actual OS job, not the async waiter.
+        let business_guard = if health {
+            None
+        } else {
+            Some(ProxyDnsPendingGuard::acquire()?)
+        };
+        let health_guard = if health {
+            Some(HealthDnsPendingGuard::acquire()?)
+        } else {
+            None
+        };
         let (send, receive) = tokio::sync::oneshot::channel();
         std::thread::Builder::new()
-            .name("aonet-proxy-dns".into())
+            .name(
+                if health {
+                    "aonet-health-dns"
+                } else {
+                    "aonet-proxy-dns"
+                }
+                .into(),
+            )
             .spawn(move || {
-                let _guard = guard;
+                let _business_guard = business_guard;
+                let _health_guard = health_guard;
                 let result = (host.as_str(), port)
                     .to_socket_addrs()
                     .map_err(|_| ProxyError::Resolution)
-                    .and_then(|answers| validate_answers(answers, port));
+                    .and_then(|answers| validate_answers(answers, port, protocol));
                 let _ = send.send(result);
             })
             .map_err(|_| ProxyError::Resolution)?;
         receive.await.map_err(|_| ProxyError::Resolution)?
+    })
+    .await
+}
+
+/// Endpoint-only check: one pinned address, no CONNECT and no target traffic.
+/// HTTP writes zero application bytes; SOCKS5 sends only the NOAUTH greeting.
+pub async fn check_resolved_proxy_health(
+    proxy: &ResolvedProxy,
+    cancel: &CancellationToken,
+    timeout: Duration,
+) -> Result<(SocketAddr, Duration), ProxyError> {
+    bounded(cancel, timeout, async {
+        let started = Instant::now();
+        let addr = *proxy.addresses.first().ok_or(ProxyError::Resolution)?;
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .map_err(|_| ProxyError::Connect)?;
+        if proxy.protocol == ProxyProtocol::Socks5 {
+            stream
+                .write_all(&[5, 1, 0])
+                .await
+                .map_err(|_| ProxyError::Socks5Protocol)?;
+            let mut method = [0; 2];
+            stream
+                .read_exact(&mut method)
+                .await
+                .map_err(|_| ProxyError::Socks5Protocol)?;
+            if method[0] != 5 {
+                return Err(ProxyError::Socks5Protocol);
+            }
+            if method[1] != 0 {
+                return Err(ProxyError::Socks5AuthenticationRequired);
+            }
+        }
+        drop(stream);
+        Ok((addr, started.elapsed()))
     })
     .await
 }
@@ -273,53 +433,9 @@ pub async fn connect_resolved_proxy_tunnel(
             .map_err(|_| ProxyError::Connect)?;
         let proxy_tcp_duration = started.elapsed();
         let tunnel_started = Instant::now();
-        let request = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n");
-        stream
-            .write_all(request.as_bytes())
-            .await
-            .map_err(|_| ProxyError::Protocol)?;
-        // Bytewise reads deliberately leave any already-arrived tunnel bytes in the socket.
-        let mut header = Vec::with_capacity(512);
-        loop {
-            if header.len() == MAX_HEADER {
-                return Err(ProxyError::HeaderTooLarge);
-            }
-            let mut byte = [0u8; 1];
-            if stream
-                .read(&mut byte)
-                .await
-                .map_err(|_| ProxyError::Protocol)?
-                == 0
-            {
-                return Err(ProxyError::Protocol);
-            }
-            header.push(byte[0]);
-            if header.ends_with(b"\r\n\r\n") {
-                break;
-            }
-        }
-        let first_line = header
-            .split(|b| *b == b'\n')
-            .next()
-            .ok_or(ProxyError::Protocol)?;
-        let first_line = first_line.strip_suffix(b"\r").ok_or(ProxyError::Protocol)?;
-        let mut parts = first_line.splitn(3, |b| *b == b' ');
-        let version = parts.next().ok_or(ProxyError::Protocol)?;
-        let status = parts.next().ok_or(ProxyError::Protocol)?;
-        if !matches!(version, b"HTTP/1.0" | b"HTTP/1.1")
-            || status.len() != 3
-            || !status.iter().all(u8::is_ascii_digit)
-        {
-            return Err(ProxyError::Protocol);
-        }
-        let code = ((status[0] - b'0') as u16) * 100
-            + ((status[1] - b'0') as u16) * 10
-            + (status[2] - b'0') as u16;
-        if code == 407 {
-            return Err(ProxyError::AuthenticationRequired);
-        }
-        if !(200..300).contains(&code) {
-            return Err(ProxyError::Rejected(code));
+        match proxy.protocol {
+            ProxyProtocol::Http => http_connect(&mut stream, target).await?,
+            ProxyProtocol::Socks5 => socks5_connect(&mut stream, target).await?,
         }
         Ok(ProxyTunnel {
             stream,
@@ -329,6 +445,131 @@ pub async fn connect_resolved_proxy_tunnel(
         })
     })
     .await
+}
+
+async fn http_connect(stream: &mut TcpStream, target: SocketAddr) -> Result<(), ProxyError> {
+    let request = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|_| ProxyError::Protocol)?;
+    // Bytewise reads deliberately leave any already-arrived tunnel bytes in the socket.
+    let mut header = Vec::with_capacity(512);
+    loop {
+        if header.len() == MAX_HEADER {
+            return Err(ProxyError::HeaderTooLarge);
+        }
+        let mut byte = [0u8; 1];
+        if stream
+            .read(&mut byte)
+            .await
+            .map_err(|_| ProxyError::Protocol)?
+            == 0
+        {
+            return Err(ProxyError::Protocol);
+        }
+        header.push(byte[0]);
+        if header.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    let first_line = header
+        .split(|b| *b == b'\n')
+        .next()
+        .ok_or(ProxyError::Protocol)?;
+    let first_line = first_line.strip_suffix(b"\r").ok_or(ProxyError::Protocol)?;
+    let mut parts = first_line.splitn(3, |b| *b == b' ');
+    let version = parts.next().ok_or(ProxyError::Protocol)?;
+    let status = parts.next().ok_or(ProxyError::Protocol)?;
+    if !matches!(version, b"HTTP/1.0" | b"HTTP/1.1")
+        || status.len() != 3
+        || !status.iter().all(u8::is_ascii_digit)
+    {
+        return Err(ProxyError::Protocol);
+    }
+    let code = ((status[0] - b'0') as u16) * 100
+        + ((status[1] - b'0') as u16) * 10
+        + (status[2] - b'0') as u16;
+    if code == 407 {
+        return Err(ProxyError::AuthenticationRequired);
+    }
+    if !(200..300).contains(&code) {
+        return Err(ProxyError::Rejected(code));
+    }
+    Ok(())
+}
+
+async fn socks5_connect(stream: &mut TcpStream, target: SocketAddr) -> Result<(), ProxyError> {
+    // Exactly one method: NOAUTH. Never send credentials or negotiate another method.
+    stream
+        .write_all(&[5, 1, 0])
+        .await
+        .map_err(|_| ProxyError::Socks5Protocol)?;
+    let mut method = [0; 2];
+    stream
+        .read_exact(&mut method)
+        .await
+        .map_err(|_| ProxyError::Socks5Protocol)?;
+    if method[0] != 5 {
+        return Err(ProxyError::Socks5Protocol);
+    }
+    if method[1] != 0 {
+        return Err(ProxyError::Socks5AuthenticationRequired);
+    }
+
+    let mut request = Vec::with_capacity(22);
+    request.extend_from_slice(&[5, 1, 0]);
+    match target.ip() {
+        IpAddr::V4(ip) => {
+            request.push(1);
+            request.extend_from_slice(&ip.octets());
+        }
+        IpAddr::V6(ip) => {
+            request.push(4);
+            request.extend_from_slice(&ip.octets());
+        }
+    }
+    request.extend_from_slice(&target.port().to_be_bytes());
+    stream
+        .write_all(&request)
+        .await
+        .map_err(|_| ProxyError::Socks5Protocol)?;
+
+    let mut header = [0; 4];
+    stream
+        .read_exact(&mut header)
+        .await
+        .map_err(|_| ProxyError::Socks5Protocol)?;
+    if header[0] != 5 || header[2] != 0 || header[1] > 8 {
+        return Err(ProxyError::Socks5Protocol);
+    }
+    let address_len = match header[3] {
+        1 => 4,
+        4 => 16,
+        3 => {
+            let len = stream
+                .read_u8()
+                .await
+                .map_err(|_| ProxyError::Socks5Protocol)?;
+            if len == 0 {
+                return Err(ProxyError::Socks5Protocol);
+            }
+            usize::from(len)
+        }
+        _ => return Err(ProxyError::Socks5Protocol),
+    };
+    // BND.ADDR is not a destination. Consume at most 255 bytes plus BND.PORT;
+    // a domain here is opaque and must never trigger DNS or another connection.
+    // Exact reads leave any already-arrived tunnel bytes untouched.
+    let mut bound = [0; 257];
+    stream
+        .read_exact(&mut bound[..address_len + 2])
+        .await
+        .map_err(|_| ProxyError::Socks5Protocol)?;
+    if header[1] != 0 {
+        return Err(ProxyError::Socks5Rejected(header[1]));
+    }
+    Ok(())
 }
 
 /// Convenience for non-permit paths. The timeout covers DNS and CONNECT together.

@@ -2,7 +2,7 @@
 (() => {
   const $=id=>document.getElementById(id);
   const native=Boolean(window.__TAURI__?.core?.invoke);
-  const state={snapshot:null,loading:false,saving:false,unknown:false,locked:true,editor:null,deletion:null,focus:null};
+  const state={snapshot:null,selectedGroup:"",loading:false,saving:false,unknown:false,locked:true,editor:null,deletion:null,focus:null};
   const siteFields=s=>({id:s.id,name:s.name,address:s.address,port:s.port??null});
   const groupFields=g=>({id:g.id,name:g.name,description:g.description,site_ids:[...g.site_ids]});
   function custom(snapshot=state.snapshot){return {sites:snapshot.sites.filter(s=>!s.builtin).map(siteFields),groups:snapshot.groups.filter(g=>!g.builtin).map(groupFields)};}
@@ -11,7 +11,10 @@
   function blocked(){return !state.snapshot||state.loading||state.saving||state.unknown||state.locked;}
   function button(text,action,disabled=false){const b=document.createElement("button");b.type="button";b.textContent=text;b.disabled=disabled;b.addEventListener("click",action);return b;}
   function options(select,rows,placeholder){const previous=select.value;select.replaceChildren();const first=document.createElement("option");first.value="";first.textContent=placeholder;select.append(first);for(const row of rows){const option=document.createElement("option");option.value=row.id;option.textContent=row.name+(row.builtin?" · 内置":"");select.append(option);}select.value=rows.some(x=>x.id===previous)?previous:"";}
-  function showPage(catalog){$("tools-page").hidden=catalog;$("catalog-page").hidden=!catalog;$("nav-tools").setAttribute("aria-current",catalog?"false":"page");$("nav-catalog").setAttribute("aria-current",catalog?"page":"false");if(catalog)$("catalog-title").focus();}
+  const subscribers=new Set();
+  function catalogSnapshot(){return state.snapshot?JSON.parse(JSON.stringify(state.snapshot)):null;}
+  function publish(){for(const notify of subscribers)notify(catalogSnapshot());}
+  function showPage(catalog){window.appShell.show(catalog?"catalog":"tools");}
   async function transport(body){
     if(native)return window.__TAURI__.core.invoke(body?"save_site_catalog":"site_catalog",body?{request:body}:undefined);
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
@@ -26,7 +29,7 @@
   async function load(){
     if(state.loading||state.saving)return;state.loading=true;render();
     try{const snapshot=await transport();if(!valid(snapshot))throw new Error("站点目录格式无效。");state.snapshot=snapshot;state.unknown=false;message("catalog-error","");message("catalog-message","目录已读取。选择站点仅填入草稿，不会自动检测。");}
-    catch(e){message("catalog-error",String(e.message||e));}finally{state.loading=false;render();}
+    catch(e){message("catalog-error",String(e.message||e));}finally{state.loading=false;render();publish();}
   }
   function sameCustom(a,b){const canonical=x=>JSON.stringify({sites:[...x.sites].sort((a,b)=>a.id.localeCompare(b.id)),groups:[...x.groups].sort((a,b)=>a.id.localeCompare(b.id)).map(g=>({...g,site_ids:[...g.site_ids].sort()}))});return canonical(a)===canonical(b);}
   async function save(data){
@@ -37,8 +40,8 @@
     }catch(error){
       // Never repeat a write whose result is unknown; reconcile with one read instead.
       try{const latest=await transport();if(!valid(latest))throw new Error("目录格式无效");state.snapshot=latest;state.unknown=false;if(latest.revision===revision+1&&sameCustom(custom(latest),data)){message("catalog-message","保存结果已通过重新读取核对。");return;}throw new Error(`${String(error.message||error)} 已重新读取最新目录；未重发保存，请核对后重新编辑。`);}
-      catch(readError){if(state.unknown)message("catalog-error","保存结果不确定，已锁定修改。请点击重新读取核对，不会自动重发。");throw readError;}
-    }finally{state.saving=false;render();}
+      catch(readError){if(state.unknown)message("catalog-error","保存结果不确定，已锁定修改。请点击顶部“常用站点”重新进入以核对，不会自动重发。");throw readError;}
+    }finally{state.saving=false;render();publish();}
   }
   function renderQuick(){
     const snapshot=state.snapshot;if(!snapshot)return;
@@ -50,16 +53,36 @@
     $("quick-site").disabled=state.loading||state.saving||state.locked;
     $("apply-site").disabled=blocked()||!$("quick-site").value;
   }
+  function renderGroups(){
+    const nav=$("catalog-groups"),focused=document.activeElement;
+    const focusedId=nav.contains(focused)?focused.dataset.groupId:null;
+    const buttons=[];
+    function add(id,name,count){
+      const b=button("",()=>{if(state.loading||state.saving)return;if(state.selectedGroup!==id)$("catalog-search").value="";state.selectedGroup=id;render();},state.loading||state.saving);
+      b.dataset.groupId=id;b.setAttribute("aria-current",state.selectedGroup===id?"true":"false");
+      const title=document.createElement("span"),total=document.createElement("span");title.textContent=name;total.textContent=String(count);total.className="group-total";b.append(title,total);buttons.push(b);nav.append(b);
+    }
+    nav.replaceChildren();add("","全部站点",state.snapshot.sites.length);
+    for(const [builtin,label] of [[true,"内置分组"],[false,"我的分组"]]){
+      const heading=document.createElement("p");heading.className="group-section-label";heading.textContent=label;nav.append(heading);
+      const groups=state.snapshot.groups.filter(g=>g.builtin===builtin);
+      for(const group of groups)add(group.id,group.name,group.site_ids.length);
+      if(!groups.length){const empty=document.createElement("p");empty.className="hint";empty.textContent=builtin?"暂无内置分组":"暂无自定义分组";nav.append(empty);}
+    }
+    if(focusedId!==null)(buttons.find(b=>b.dataset.groupId===focusedId)||buttons[0]).focus();
+  }
   function render(){
-    const disabled=blocked();$("new-site").disabled=disabled;$("new-group").disabled=disabled;$("catalog-reload").disabled=state.loading||state.saving;
+    window.appShell?.setLocked("catalog",state.saving||state.unknown);
+    const disabled=blocked();$("new-site").disabled=disabled;$("new-group").disabled=disabled;
     $("editor-save").disabled=disabled;$("editor-cancel").disabled=state.saving;$("delete-confirm").disabled=disabled;$("delete-cancel").disabled=state.saving;
     if(!state.snapshot)return;
-    options($("catalog-group"),state.snapshot.groups,"全部站点");$("catalog-group").disabled=state.loading||state.saving;
-    const group=state.snapshot.groups.find(g=>g.id===$("catalog-group").value);
+    if(!state.snapshot.groups.some(g=>g.id===state.selectedGroup))state.selectedGroup="";
+    renderGroups();
+    const group=state.snapshot.groups.find(g=>g.id===state.selectedGroup);
     $("group-name").textContent=group?group.name+(group.builtin?" · 内置组合":" · 自定义组合"):"全部站点";
     $("group-description").textContent=group?group.description:"一个站点可以加入多个组合；编辑站点会同时更新各组合。";
     $("group-actions").replaceChildren();
-    if(group){$("group-actions").append(button("复制组合",()=>openEditor("group",group,true),disabled));if(!group.builtin)$("group-actions").append(button("编辑",()=>openEditor("group",group),disabled),button("删除",()=>openDelete("group",group),disabled));}
+    if(group&&!group.builtin)$("group-actions").append(button("编辑",()=>openEditor("group",group),disabled),button("删除",()=>openDelete("group",group),disabled));
     const query=$("catalog-search").value.trim().toLocaleLowerCase();
     const sites=state.snapshot.sites.filter(s=>(!group||group.site_ids.includes(s.id))&&(!query||`${s.name} ${s.address}`.toLocaleLowerCase().includes(query)));
     $("catalog-count").textContent=`${sites.length} 个站点${state.locked?" · 检测期间暂不可修改或填入地址":""}`;
@@ -74,7 +97,7 @@
       if(!site.builtin)actions.append(button("编辑",()=>openEditor("site",site),disabled),button("删除",()=>openDelete("site",site),disabled));
       li.append(info,actions);$("catalog-sites").append(li);
     }
-    if(!sites.length){const empty=document.createElement("li");empty.textContent="暂无匹配站点。可以新增站点，或编辑组合添加成员。";$("catalog-sites").append(empty);}
+    if(!sites.length){const empty=document.createElement("li"),total=group?group.site_ids.length:state.snapshot.sites.length;empty.textContent=query?`本${group?"分组":"站点库"}共 ${total} 个站点，没有匹配「${$("catalog-search").value.trim()}」的结果。清空搜索可查看全部。`:"该分组暂无站点。可以新增站点，或编辑组合添加成员。";$("catalog-sites").append(empty);}
     renderQuick();
   }
   function openEditor(kind,item=null,copy=false){
@@ -112,12 +135,13 @@
     if(kind==="group")data.groups=data.groups.filter(g=>g.id!==id);else{data.sites=data.sites.filter(s=>s.id!==id);data.groups=data.groups.map(g=>({...g,site_ids:g.site_ids.filter(member=>member!==id)}));}
     try{await save(data);closeDelete();}catch(e){message("catalog-error",String(e.message||e));closeDelete();}
   }
-  window.siteCatalog={setLocked(value){if(state.locked!==value){state.locked=value;render();}}};
-  $("nav-tools").addEventListener("click",()=>showPage(false));$("nav-catalog").addEventListener("click",()=>showPage(true));
-  $("catalog-group").addEventListener("change",render);$("catalog-search").addEventListener("input",render);$("catalog-reload").addEventListener("click",()=>void load());
+  window.siteCatalog={snapshot:catalogSnapshot,subscribe(notify){subscribers.add(notify);notify(catalogSnapshot());return ()=>subscribers.delete(notify);},reload:load,setLocked(value){if(state.locked!==value){state.locked=value;render();}}};
+  window.appShell?.subscribe(source=>{if(source!=="catalog")window.siteCatalog.setLocked(window.appShell.isLockedExcept("catalog"));});
+  window.addEventListener("aonet-page",event=>{if(event.detail==="catalog")void load();});
+  $("catalog-search").addEventListener("input",render);
   $("quick-group").addEventListener("change",renderQuick);$("quick-site").addEventListener("change",renderQuick);$("apply-site").addEventListener("click",()=>{const site=state.snapshot?.sites.find(s=>s.id===$("quick-site").value);if(site&&!blocked())window.networkToolDraft.applySite(site);});
   $("new-site").addEventListener("click",()=>openEditor("site"));$("new-group").addEventListener("click",()=>openEditor("group"));
   $("catalog-editor").addEventListener("submit",submit);$("editor-cancel").addEventListener("click",closeEditor);$("delete-cancel").addEventListener("click",closeDelete);$("delete-confirm").addEventListener("click",()=>void remove());
   $("catalog-dialog").addEventListener("cancel",event=>{event.preventDefault();closeEditor();});$("delete-dialog").addEventListener("cancel",event=>{event.preventDefault();closeDelete();});
-  state.locked=window.networkToolDraft.isLocked();void load();
+  state.locked=window.appShell?window.appShell.isLockedExcept("catalog"):window.networkToolDraft.isLocked();void load();
 })();

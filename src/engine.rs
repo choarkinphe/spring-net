@@ -3,6 +3,7 @@ use crate::{
     model::{Permit, Run, RunConfig, SiteList, Target},
     policy::{self, Cooldowns},
     proxy::{self, ResolvedProxy},
+    proxy_settings::RouteSnapshot,
 };
 use std::{
     collections::HashSet,
@@ -172,16 +173,33 @@ impl Engine {
     }
     pub async fn start(
         &self,
-        mut config: RunConfig,
+        config: RunConfig,
         lists: &[SiteList],
         permits: &[Permit],
     ) -> Result<Run, String> {
+        let route = RouteSnapshot {
+            proxy: config.proxy.clone(),
+            ..RouteSnapshot::default()
+        };
+        self.start_with_route(config, lists, permits, route).await
+    }
+
+    /// The service freezes settings at admission; workers and persisted results use that route.
+    pub async fn start_with_route(
+        &self,
+        mut config: RunConfig,
+        lists: &[SiteList],
+        permits: &[Permit],
+        mut route: RouteSnapshot,
+    ) -> Result<Run, String> {
+        config.proxy = route.proxy.clone();
         config.validate()?;
         config.proxy = config
             .proxy
             .as_ref()
             .map(|p| proxy::normalize_proxy_config(p, self.control_port).map_err(|e| e.to_string()))
             .transpose()?;
+        route.proxy = config.proxy.clone();
         let mut guard = self.current.lock().await;
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出，不能开始新测试".into());
@@ -363,13 +381,15 @@ impl Engine {
                 .any(|t| t.addr.is_some_and(|a| a.ip().is_loopback())),
         )?;
         authorization_window(&selected, Duration::from_secs(config.duration_secs))?;
-        let metrics = Arc::new(Mutex::new(Metrics::new(
+        let mut metrics = Metrics::new(
             config.clone(),
             &selected
                 .iter()
                 .map(|s| s.target.clone())
                 .collect::<Vec<_>>(),
-        )));
+        );
+        metrics.run.route = route;
+        let metrics = Arc::new(Mutex::new(metrics));
         let cancel = self.shutdown.child_token();
         let initial = metrics.lock().unwrap().run.clone();
         let history = self.history.clone();
@@ -818,4 +838,204 @@ async fn execute(
         }
     }
     metrics.lock().unwrap().run = terminal;
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+    use crate::{model::ProxyPermit, proxy::ProxyConfig};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    fn config() -> RunConfig {
+        RunConfig {
+            mode: "http".into(),
+            list_ids: vec![],
+            target_ids: vec![],
+            authorized_ids: vec!["owned".into()],
+            concurrency: 1,
+            rps: 1,
+            duration_secs: 1,
+            timeout_secs: 1,
+            ramp_secs: 0,
+            fresh_connections: false,
+            proxy: None,
+        }
+    }
+
+    fn permit(url: String, proxy: Option<&ProxyConfig>) -> Permit {
+        Permit {
+            id: "owned".into(),
+            name: "Owned fixture".into(),
+            url,
+            modes: vec!["http".into()],
+            allowed_ips: vec![
+                "127.0.0.1/32".parse().unwrap(),
+                "10.0.0.1/32".parse().unwrap(),
+            ],
+            max_concurrency: 1,
+            max_rps: 1,
+            max_duration: 2,
+            authorization: "Controlled fixture consent".into(),
+            expires_at: "2099-01-01T00:00:00Z".into(),
+            proxy_routes: proxy
+                .map(|p| {
+                    vec![ProxyPermit {
+                        url: p.url.clone(),
+                        allowed_ips: vec!["127.0.0.1/32".parse().unwrap()],
+                        authorization: "Controlled proxy fixture consent".into(),
+                    }]
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    async fn headers(stream: &mut tokio::net::TcpStream) -> String {
+        let mut bytes = vec![];
+        while !bytes.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).await.unwrap();
+            bytes.push(byte[0]);
+            assert!(bytes.len() < 16_384);
+        }
+        String::from_utf8(bytes).unwrap()
+    }
+
+    async fn terminal(engine: &Engine) -> Run {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let run = engine.snapshot().await.unwrap();
+                if !run.active() {
+                    return run;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn explicit_route_overrides_request_and_survives_snapshot_and_history() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = ProxyConfig {
+            url: format!("http://{}", listener.local_addr().unwrap()),
+        };
+        let route = RouteSnapshot {
+            settings_revision: 42,
+            profile_id: Some("frozen".into()),
+            profile_name: Some("Frozen proxy".into()),
+            proxy: Some(proxy.clone()),
+            local_direct: false,
+        };
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            assert!(
+                headers(&mut stream)
+                    .await
+                    .starts_with("CONNECT 10.0.0.1:80 ")
+            );
+            stream
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .unwrap();
+            assert!(headers(&mut stream).await.starts_with("GET / "));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let history = crate::history::History::open(dir.path()).unwrap();
+        let engine = Engine::new(dir.path().into(), None, CancellationToken::new())
+            .unwrap()
+            .with_history(history.clone());
+        let mut config = config();
+        config.proxy = Some(ProxyConfig {
+            url: "invalid request proxy must be ignored".into(),
+        });
+        let initial = engine
+            .start_with_route(
+                config,
+                &[],
+                &[permit("http://10.0.0.1/".into(), Some(&proxy))],
+                route.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(initial.route, route);
+        assert_eq!(initial.config.proxy, route.proxy);
+        assert_eq!(engine.snapshot().await.unwrap().route, route);
+        let run = terminal(&engine).await;
+        assert_eq!(run.route, route);
+        assert_eq!(run.config.proxy, route.proxy);
+        assert_eq!(history.get(&run.id).unwrap().route, route);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn direct_route_clears_stale_request_proxy() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            assert!(headers(&mut stream).await.starts_with("GET / "));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::new(dir.path().into(), None, CancellationToken::new()).unwrap();
+        let route = RouteSnapshot {
+            settings_revision: 9,
+            ..RouteSnapshot::default()
+        };
+        let mut config = config();
+        config.proxy = Some(ProxyConfig {
+            url: "invalid stale proxy".into(),
+        });
+        let initial = engine
+            .start_with_route(config, &[], &[permit(url, None)], route.clone())
+            .await
+            .unwrap();
+        assert_eq!(initial.config.proxy, None);
+        assert_eq!(initial.route, route);
+        let run = terminal(&engine).await;
+        assert_eq!(run.route, route);
+        assert_eq!(run.config.proxy, None);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_start_derives_normalized_route_from_config() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = ProxyConfig {
+            url: format!("http://{}/", listener.local_addr().unwrap()),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::new(dir.path().into(), None, CancellationToken::new()).unwrap();
+        let mut config = config();
+        config.proxy = Some(proxy.clone());
+        let initial = engine
+            .start(
+                config,
+                &[],
+                &[permit("http://10.0.0.1/".into(), Some(&proxy))],
+            )
+            .await
+            .unwrap();
+        let normalized = proxy::normalize_proxy_config(&proxy, None).unwrap();
+        assert_eq!(
+            initial.route,
+            RouteSnapshot {
+                proxy: Some(normalized.clone()),
+                ..RouteSnapshot::default()
+            }
+        );
+        assert_eq!(initial.config.proxy, Some(normalized));
+        engine.shutdown_and_wait().await;
+    }
 }

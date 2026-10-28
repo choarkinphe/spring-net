@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::sync::{Mutex, RwLock};
@@ -42,12 +43,19 @@ pub struct AppService {
     pub(crate) diagnostics: DiagnosticManager,
     pub(crate) network_tools: crate::network_tools::NetworkToolManager,
     pub(crate) monitor: crate::monitor::MonitorManager,
-    pub(crate) monitor_route:
-        std::sync::Mutex<Option<(uuid::Uuid, Option<crate::proxy::ProxyConfig>)>>,
+    pub(crate) monitor_route: std::sync::Mutex<
+        Option<(
+            uuid::Uuid,
+            Option<crate::proxy::ProxyConfig>,
+            crate::proxy_settings::RouteSnapshot,
+        )>,
+    >,
     pub(crate) batches: crate::batch_service::BatchManager,
     pub(crate) history: crate::history::History,
     pub lists: RwLock<Vec<SiteList>>,
     pub(crate) site_catalog: crate::site_catalog::Manager,
+    pub(crate) proxy_settings: crate::proxy_settings::Manager,
+    pub(crate) proxy_health: Arc<crate::proxy_health::Manager>,
     pub(crate) connection_presets: Vec<ConnectionPreset>,
     pub(crate) permits: RwLock<Vec<Permit>>,
     pub(crate) auth_file: PathBuf,
@@ -83,7 +91,13 @@ impl AppService {
                 Err(error) => (vec![], Some(error)),
             };
         lists.extend(storage::load_custom(&config.data)?);
-        let site_catalog = crate::site_catalog::Manager::new(&config.data, &lists)?;
+        let site_catalog = crate::site_catalog::Manager::new_with_connections(
+            &config.data,
+            &lists,
+            &connection_presets,
+        )?;
+        let proxy_settings =
+            crate::proxy_settings::Manager::new(&config.data, config.control_port)?;
         let history = crate::history::History::open(&config.data)?;
         let engine = Engine::new(config.data.clone(), config.control_port, shutdown.clone())?
             .with_history(history.clone());
@@ -107,6 +121,11 @@ impl AppService {
             history,
             lists: RwLock::new(lists),
             site_catalog,
+            proxy_settings,
+            proxy_health: Arc::new(crate::proxy_health::Manager::new(
+                config.control_port,
+                shutdown.clone(),
+            )),
             connection_presets,
             permits: RwLock::new(permits),
             auth_file: config.auth_file,
@@ -120,6 +139,97 @@ impl AppService {
             shutdown,
             demo: tokio::sync::Mutex::new(None),
         })
+    }
+    pub async fn start_background(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let provider: crate::proxy_health::ContextProvider = Arc::new(move || {
+            let weak = weak.clone();
+            Box::pin(async move {
+                let Some(service) = weak.upgrade() else {
+                    return (Default::default(), true);
+                };
+                let busy = service.proxy_health_busy().await;
+                (service.proxy_settings.route(), busy)
+            })
+        });
+        self.proxy_health.start(provider).await;
+    }
+    async fn proxy_health_busy(&self) -> bool {
+        self.shutdown.is_cancelled()
+            || self.mutation.try_lock().is_err()
+            || self
+                .network_tools
+                .snapshot()
+                .await
+                .is_some_and(|s| s.active())
+            || self.batches.snapshot().await.is_some_and(|s| s.active())
+            || self
+                .batches
+                .catalog_state(None)
+                .await
+                .is_ok_and(|s| s.snapshot.is_some_and(|s| s.active()))
+            || self.engine.snapshot().await.is_some_and(|s| s.active())
+            || self
+                .diagnostics
+                .snapshot()
+                .await
+                .is_some_and(|s| s.active())
+            || {
+                let s = self.monitor.snapshot();
+                s.active || s.draining
+            }
+            || policy::target_dns_pending() != 0
+            || crate::proxy::proxy_dns_pending() != 0
+            || crate::monitor_worker::monitor_dns_pending()
+    }
+    pub fn proxy_health_state(&self) -> crate::proxy_health::Snapshot {
+        let mut snapshot = self.proxy_health.snapshot();
+        let route = self.proxy_settings.route();
+        if snapshot.route != route {
+            snapshot = crate::proxy_health::Snapshot {
+                status: if route.proxy.is_none() {
+                    crate::proxy_health::Status::Disabled
+                } else {
+                    crate::proxy_health::Status::Unknown
+                },
+                route,
+                checked_at: None,
+                latency_ms: None,
+                proxy_addr: None,
+                error: None,
+                evidence: "设置已更新，等待代理端点检查；未验证转发能力".into(),
+            };
+        }
+        snapshot
+    }
+    pub fn proxy_settings(&self) -> crate::proxy_settings::Snapshot {
+        self.proxy_settings.snapshot()
+    }
+    pub async fn save_proxy_settings(
+        &self,
+        request: crate::proxy_settings::SaveRequest,
+    ) -> Result<crate::proxy_settings::Snapshot, String> {
+        let _gate = self.mutation.lock().await;
+        self.ensure_mutable().await?;
+        let snapshot = self.proxy_settings.save(request)?;
+        self.proxy_health.pause();
+        Ok(snapshot)
+    }
+    fn effective_proxy(
+        &self,
+        requested: Option<crate::proxy::ProxyConfig>,
+    ) -> Result<Option<crate::proxy::ProxyConfig>, String> {
+        let active = self.proxy_settings.route().proxy;
+        if let Some(requested) = requested {
+            let requested = crate::proxy::normalize_proxy_config(&requested, self.control_port)
+                .map_err(|e| e.to_string())?;
+            if active.as_ref() != Some(&requested) {
+                return Err(
+                    "请求代理与系统设置当前启用项不一致，请在系统设置中选择后再开始".into(),
+                );
+            }
+        }
+        Ok(active)
     }
     pub fn site_catalog(&self) -> crate::site_catalog::Snapshot {
         self.site_catalog.snapshot()
@@ -199,6 +309,7 @@ impl AppService {
             return Err("监控请求ID必须为规范UUID".into());
         }
         let _gate = self.mutation.lock().await;
+        self.proxy_health.pause();
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出".into());
         }
@@ -208,12 +319,25 @@ impl AppService {
                     .map_err(|e| e.to_string())
             })
             .transpose()?;
-        if let Some(existing) = self.monitor.validate_retry(id, revision, lifetime)? {
-            if self.monitor_route.lock().unwrap().as_ref() != Some(&(id, proxy.clone())) {
+        if self
+            .monitor
+            .validate_retry(id, revision, lifetime)?
+            .is_some()
+        {
+            if !self
+                .monitor_route
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|(stored_id, requested, _)| *stored_id == id && *requested == proxy)
+            {
                 return Err("请求ID对应的代理路径与原请求不同".into());
             }
-            return Ok(json!(existing));
+            return Ok(self.monitor_state());
         }
+        let requested_proxy = proxy.clone();
+        let route = self.proxy_settings.route();
+        let proxy = self.effective_proxy(proxy)?;
         self.engine.settle().await?;
         self.batches.settle().await?;
         self.diagnostics.settle().await?;
@@ -253,15 +377,16 @@ impl AppService {
             resolved,
         ));
         self.monitor.start(id, revision, worker, lifetime)?;
-        *self.monitor_route.lock().unwrap() = Some((id, proxy));
+        *self.monitor_route.lock().unwrap() = Some((id, requested_proxy, route));
         Ok(self.monitor_state())
     }
     pub fn monitor_state(&self) -> Value {
         let mut snapshot = json!(self.monitor.snapshot());
-        if let Some((generation, proxy)) = self.monitor_route.lock().unwrap().as_ref()
+        if let Some((generation, _, route)) = self.monitor_route.lock().unwrap().as_ref()
             && snapshot["generation"].as_str() == Some(&generation.to_string())
         {
-            snapshot["proxy"] = json!(proxy);
+            snapshot["proxy"] = json!(route.proxy);
+            snapshot["route"] = json!(route);
         }
         snapshot["dns_draining"] = json!(crate::monitor_worker::monitor_dns_pending());
         snapshot
@@ -291,6 +416,7 @@ impl AppService {
         request: crate::network_tools::Request,
     ) -> Result<crate::network_tools::Snapshot, String> {
         let _gate = self.mutation.lock().await;
+        self.proxy_health.pause();
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出".into());
         }
@@ -301,7 +427,9 @@ impl AppService {
         self.engine.settle().await?;
         self.batches.settle().await?;
         self.diagnostics.settle().await?;
-        self.network_tools.start(request).await
+        self.network_tools
+            .start_with_route(request, self.proxy_settings.route())
+            .await
     }
     pub async fn network_state(&self) -> Option<crate::network_tools::Snapshot> {
         self.network_tools.snapshot().await
@@ -312,11 +440,117 @@ impl AppService {
     ) -> Result<crate::network_tools::Snapshot, String> {
         self.network_tools.stop(id).await
     }
+    async fn catalog_batch_external_busy_sources(&self) -> Vec<String> {
+        // Observations only: do not settle tasks, acquire the mutation gate, or
+        // start DNS. network_tools has its own independent frontend lock source.
+        let mut sources = Vec::new();
+        if self.batches.snapshot().await.is_some_and(|s| s.active()) {
+            sources.push("legacy_batch".into());
+        }
+        if self.engine.snapshot().await.is_some_and(|s| s.active()) {
+            sources.push("engine".into());
+        }
+        if self
+            .diagnostics
+            .snapshot()
+            .await
+            .is_some_and(|s| s.active())
+        {
+            sources.push("diagnostics".into());
+        }
+        let monitor = self.monitor.snapshot();
+        if monitor.active || monitor.draining {
+            sources.push("monitor".into());
+        }
+        if policy::target_dns_pending() != 0
+            || crate::proxy::proxy_dns_pending() != 0
+            || crate::monitor_worker::monitor_dns_pending()
+        {
+            sources.push("dns_draining".into());
+        }
+        if self.shutdown.is_cancelled() {
+            sources.push("shutdown".into());
+        }
+        sources
+    }
+    pub async fn catalog_batch_info(&self) -> Value {
+        // Keep full replacement data and its CAS revision from one mutation epoch.
+        let _gate = self.mutation.lock().await;
+        let authorized: Vec<Value> = self
+            .permits
+            .read()
+            .await
+            .iter()
+            .map(|p| {
+                let mut value = json!(p);
+                value["expired"] = json!(
+                    chrono::DateTime::parse_from_rfc3339(&p.expires_at)
+                        .map_or(true, |expiry| expiry <= chrono::Utc::now())
+                );
+                value
+            })
+            .collect();
+        let external_busy_sources = self.catalog_batch_external_busy_sources().await;
+        json!({"version":env!("CARGO_PKG_VERSION"),"token":null,"limits":crate::catalog_batch::limits(),"authorized":authorized,
+            "external_busy":!external_busy_sources.is_empty(),"external_busy_sources":external_busy_sources,
+            "auth_revision":self.auth_revision.load(std::sync::atomic::Ordering::SeqCst),"authorization_error":*self.auth_error.read().await,
+            "dns_draining":policy::target_dns_pending()!=0 || crate::proxy::proxy_dns_pending()!=0 || crate::monitor_worker::monitor_dns_pending()})
+    }
+    pub async fn start_catalog_batch(
+        &self,
+        mut request: crate::catalog_batch::Request,
+    ) -> Result<crate::catalog_batch::Snapshot, String> {
+        request.normalize()?;
+        let _gate = self.mutation.lock().await;
+        self.proxy_health.pause();
+        if let Some(existing) = self.batches.existing_catalog(&request).await? {
+            return Ok(existing);
+        }
+        self.ensure_mutable().await?;
+        if request.mode != crate::catalog_batch::Mode::PublicHttp
+            && let Some(error) = self.auth_error.read().await.as_ref()
+        {
+            return Err(format!(
+                "authorization configuration requires repair: {error}"
+            ));
+        }
+        let permits = self.permits.read().await.clone();
+        self.batches
+            .start_catalog_with_route(
+                request,
+                &self.site_catalog.snapshot(),
+                &permits,
+                self.proxy_settings.route(),
+            )
+            .await
+    }
+    pub async fn catalog_batch_state(
+        &self,
+        request: crate::catalog_batch::StateRequest,
+    ) -> Result<crate::catalog_batch::StateResponse, String> {
+        let mut response = self
+            .batches
+            .catalog_state(request.request_id.as_deref())
+            .await?;
+        response.external_busy_sources = self.catalog_batch_external_busy_sources().await;
+        response.external_busy = !response.external_busy_sources.is_empty();
+        Ok(response)
+    }
+    pub async fn stop_catalog_batch(
+        &self,
+        request: crate::catalog_batch::StopRequest,
+    ) -> Result<crate::catalog_batch::Snapshot, String> {
+        self.batches.stop_catalog(&request.request_id).await
+    }
     pub async fn start_batch(
         &self,
         request: crate::batch_service::RunBatchRequest,
     ) -> Result<crate::batch_service::BatchSnapshot, String> {
         let _gate = self.mutation.lock().await;
+        self.proxy_health.pause();
+        if let Some(existing) = self.batches.existing_request(&request).await? {
+            return Ok(existing);
+        }
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出".into());
         }
@@ -324,7 +558,14 @@ impl AppService {
         self.engine.settle().await?;
         self.diagnostics.settle().await?;
         self.network_tools.settle().await?;
-        self.batches.start(request, &self.lists.read().await).await
+        self.effective_proxy(request.proxy.clone())?;
+        self.batches
+            .start_with_route(
+                request,
+                &self.lists.read().await,
+                self.proxy_settings.route(),
+            )
+            .await
     }
     pub async fn batch_state(&self) -> Option<crate::batch_service::BatchSnapshot> {
         self.batches.snapshot().await
@@ -338,8 +579,9 @@ impl AppService {
             .await
             .ok_or_else(|| "批次不存在或编号已过期".into())
     }
-    pub async fn start(&self, config: RunConfig) -> Result<Run, String> {
+    pub async fn start(&self, mut config: RunConfig) -> Result<Run, String> {
         let _gate = self.mutation.lock().await;
+        self.proxy_health.pause();
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出".into());
         }
@@ -354,13 +596,17 @@ impl AppService {
         self.network_tools.settle().await?;
         let lists = self.lists.read().await.clone();
         let permits = self.permits.read().await.clone();
-        self.engine.start(config, &lists, &permits).await
+        config.proxy = self.effective_proxy(config.proxy)?;
+        self.engine
+            .start_with_route(config, &lists, &permits, self.proxy_settings.route())
+            .await
     }
     pub async fn start_diagnostic(
         &self,
         config: DiagnosticConfig,
     ) -> Result<DiagnosticSnapshot, String> {
         let _gate = self.mutation.lock().await;
+        self.proxy_health.pause();
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出".into());
         }
@@ -382,7 +628,10 @@ impl AppService {
         self.batches.settle().await?;
         self.engine.settle().await?;
         self.network_tools.settle().await?;
-        self.diagnostics.start(config, allowed_loopback).await
+        self.effective_proxy(config.proxy.clone())?;
+        self.diagnostics
+            .start_with_route(config, allowed_loopback, self.proxy_settings.route())
+            .await
     }
     pub async fn diagnostic_state(&self) -> Option<DiagnosticSnapshot> {
         self.diagnostics.snapshot().await
@@ -870,6 +1119,7 @@ impl AppService {
     }
     pub async fn shutdown_and_wait(&self) {
         self.shutdown.cancel();
+        self.proxy_health.shutdown().await;
         let (_, _, _, _, monitor_result) = tokio::join!(
             self.engine.shutdown_and_wait(),
             self.diagnostics.shutdown_and_wait(),
@@ -897,5 +1147,82 @@ impl AppService {
         if let Some(demo) = self.demo.lock().await.take() {
             demo.shutdown().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod catalog_external_busy_tests {
+    use super::*;
+    #[tokio::test]
+    async fn info_and_unknown_state_report_external_activity_without_mutation_gate() {
+        let directory = tempfile::tempdir().unwrap();
+        let auth_file = directory.path().join("auth.json");
+        std::fs::write(&auth_file, r#"{"version":1,"targets":[]}"#).unwrap();
+        let service = AppService::initialize(
+            ServiceConfig {
+                root: env!("CARGO_MANIFEST_DIR").into(),
+                data: directory.path().join("data"),
+                auth_file,
+                control_port: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(service.catalog_batch_info().await["external_busy"], false);
+        service.set_self_test(true).await.unwrap();
+        service
+            .start(RunConfig {
+                mode: "tcp".into(),
+                list_ids: vec![],
+                target_ids: vec![],
+                authorized_ids: vec!["demo-tcp".into()],
+                concurrency: 1,
+                rps: 1,
+                duration_secs: 10,
+                timeout_secs: 1,
+                ramp_secs: 0,
+                fresh_connections: false,
+                proxy: None,
+            })
+            .await
+            .unwrap();
+        let info = service.catalog_batch_info().await;
+        assert_eq!(info["external_busy"], true);
+        assert!(
+            info["external_busy_sources"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("engine"))
+        );
+        let gate = service.mutation.lock().await;
+        let state = tokio::time::timeout(
+            Duration::from_secs(1),
+            service.catalog_batch_state(crate::catalog_batch::StateRequest {
+                request_id: Some(uuid::Uuid::new_v4().to_string()),
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(!state.accepted);
+        assert!(state.external_busy);
+        assert!(state.external_busy_sources.contains(&"engine".to_string()));
+        assert!(
+            !state
+                .external_busy_sources
+                .contains(&"network_tools".to_string())
+        );
+        drop(gate);
+        service.shutdown_and_wait().await;
+        let state = service
+            .catalog_batch_state(Default::default())
+            .await
+            .unwrap();
+        assert!(
+            state
+                .external_busy_sources
+                .contains(&"shutdown".to_string())
+        );
     }
 }

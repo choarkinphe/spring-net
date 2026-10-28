@@ -299,6 +299,7 @@ mod tests {
             mode: "probe".into(),
             started_at: "2025-01-01T00:00:00Z".into(),
             elapsed_secs: 1.5,
+            route: Default::default(),
             config: RunConfig {
                 mode: "probe".into(),
                 list_ids: vec![],

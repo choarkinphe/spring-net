@@ -1,0 +1,46 @@
+# 应用管理与标准协议检测
+
+日期：2026-10-28。源码基于0.7.0；本轮没有升级版本、提交或打包。代理设置与footer健康检查由并行会话提供，并在本轮联调中保留。
+
+## 管理结构
+
+原站点维护升级为分类 → 应用 → 具体端点，分组引用应用，应用引用共享端点。分类包括网页服务、GDS/行业系统、通信应用、网络服务、自定义。左侧分类和组合，右侧展开应用查看端点与参考规则；切换筛选清搜索。新增操作使用有title/aria-label的加号，不恢复组合复制/重读按钮。重新进入页面读取最新目录。
+
+端点记录传输TCP/UDP/未知、应用协议、地址、单端口、用途、QUIC ALPN。服务端计算可用工具，不接受客户端伪造能力。应用可共享端点，编辑一次同步；端点复制形成独立自定义记录。删除应用不删除共享端点；删除端点明确移除受影响应用引用。
+
+通配地址、动态/范围端口、缺失信息保留为参考规则，不展开、不扫描、不进入批量或协议探测。配置保存只验证语法，不连接目标、不授予负载权限。
+
+## 预设实际范围
+
+- 原55个网站、7个组合保持，迁移为单端点应用。
+- 6张既有GDS资料按产品保留：Travelport Smartpoint Cloud/Desktop、Air API、Sabre、Amadeus、IBE+。明确HTTP(S)入口可供检查，其他规则不自动推断协议。
+- 当前完整内置快照为64个应用、57个具体端点；其中额外2个为已有资料核实的HTTP(S)入口，不代表完整GDS业务链。
+- 微信、QQ、钉钉共3个应用占位，包含登录/消息/文件/音视频用途和缺失说明；尚无核实完整客户端矩阵，不伪造端点、不套腾讯会议或企业微信白名单。
+- 官网可达、TLS/QUIC成功不等于业务登录、消息、票务交易正常。
+
+## 兼容与持久化
+
+固定site-catalog.json升级version2，严格SaveRequest带schema_version=2、expected_revision、sites/applications/groups。v1磁盘目录和旧lists.json仅内存迁移，首次明确保存才写v2；保持旧端点ID和组合共享关系，旧v1写请求拒绝，避免字段丢失。保留源文件字节检查、revision CAS、原子写入、损坏/符号链接/超限失败保护。旧应用版本不能读取v2文件，回退需恢复自行保留的旧数据备份，不应让旧版覆盖。
+
+批量按组合→应用→端点展开，按端点ID去重并冻结应用身份。仍只有公共HTTP、授权HTTP/TCP；UDP、QUIC、未知传输不可被当成TCP。精确授权URL或主机/端口、CIDR、有效期及代理路径限制不变。
+
+## 新增工具
+
+### UDP DNS
+
+独立于“系统DNS”：指定DNS服务器、端口（默认53）、查询名及A/AAAA。一次UDP标准查询，不使用EDNS、不重试、不切换服务器、不回退TCP；5秒期限，512字节响应上限，事务/问题/来源校验，最多丢弃16份无效报文。显示RCODE、答案及截断标志；超时不等于端口关闭，答案地址不自动连接，不声称DNSSEC验证。
+
+### QUIC
+
+明确填写服务器、端口和单ALPN；不凭UDP443猜测QUIC或h3。单连接8秒握手，正常证书链/名称校验，Mozilla根；无0RTT/会话复用/应用stream或datagram/keepalive/地址迁移。协议握手可能重传或Retry，不是单UDP包。发送64KiB/64报文，接收256KiB/256报文且单包2048字节限制。关闭后跟踪并await所有driver及socket释放，才返回结果。
+
+两工具沿用全部解析地址校验与固定首IP、特殊地址和控制端口限制；不新增生产loopback例外。本地fixture直接调用私有模块。HTTP CONNECT/SOCKS5启用或前端代理状态未知时禁止新UDP工具，后端也拒绝，不静默直连。
+
+## 验证记录
+
+- 联合Rust lib 268项通过，含v2迁移/引用/CAS、批量协议限制、UDP DNS6项、QUIC10项受控测试。
+- 浏览器隔离目录target/application-verification：64应用/57端点预设加载，GDS分类6项，微信QQ钉钉展示未知规则且无探测端点；创建网络服务应用和UDP DNS端点，保存成功；选择UDP DNS仅填服务器/53端口，查询名保持空，未自动开始。
+- QUIC必要ALPN字段显示；375px工具及应用管理无横向溢出，恢复桌面视口；console无错误。没有在浏览器向公共GDS/聊天端点发起协议探测。
+- 最终联合验证：Rust lib 268/268、Node（含版本测试）129/129、Clippy `-D warnings`、Tauri locked/offline check及git diff --check通过。日志位于target/application-suite-final.log、application-web-final.log、application-clippy-final.log、application-desktop-final.log。
+- 新依赖固定quinn0.11.11、hickory-proto0.25.2，根及桌面锁同步。首次下载crates.io超时后用命令级rsproxy镜像完成，不改全局配置。后续本机复验使用同镜像配置与--offline。
+- 不将原生编译检查当作完整桌面交互验收。Windows本机运行未验证。此会话所有写入代理已停止，已向统一测试打包会话交接；本会话未生成新包或提交。

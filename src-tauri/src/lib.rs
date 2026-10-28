@@ -62,7 +62,8 @@ pub fn run() {
                 cleaned: AtomicBool::new(false),
                 _lock: lock,
             });
-            // Local files and loopback listeners only; complete before exposing IPC.
+            // Initialize validated local configuration before exposing IPC; endpoint
+            // health checks start explicitly only after the service has an Arc owner.
             let initialized = tauri::async_runtime::block_on(AppService::initialize(
                 ServiceConfig {
                     root: resources,
@@ -73,6 +74,9 @@ pub fn run() {
                 tokio_util::sync::CancellationToken::new(),
             ))
             .map(Arc::new);
+            if let Ok(service) = &initialized {
+                tauri::async_runtime::block_on(service.start_background());
+            }
             *handle.state::<DesktopState>().service.blocking_write() = initialized;
             #[cfg(target_os = "macos")]
             {
@@ -141,6 +145,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::proxy_health,
+            commands::proxy_settings,
+            commands::save_proxy_settings,
             commands::site_catalog,
             commands::save_site_catalog,
             commands::network_info,
@@ -157,6 +164,10 @@ pub fn run() {
             commands::monitor_heartbeat,
             commands::monitor_stop,
             commands::monitor_pause,
+            commands::catalog_batch_info,
+            commands::catalog_batch_start,
+            commands::catalog_batch_state,
+            commands::catalog_batch_stop,
             commands::batch_state,
             commands::batch_start,
             commands::batch_stop,

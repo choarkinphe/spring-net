@@ -11,7 +11,6 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use tokio::task::JoinHandle;
 use tokio_rustls::{
     TlsConnector,
     rustls::{self, ClientConfig, RootCertStore, pki_types::ServerName},
@@ -22,13 +21,6 @@ use url::Url;
 const MAX_BODY: usize = 64 * 1024;
 trait AsyncIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> AsyncIo for T {}
-
-struct Driver(JoinHandle<Result<(), hyper::Error>>);
-impl Drop for Driver {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
 
 #[derive(Debug)]
 pub struct HttpResponse {
@@ -96,76 +88,89 @@ pub async fn request(
             .handshake(TokioIo::new(io))
             .await
             .map_err(|e| format!("HTTP handshake: {e}"))?;
-        let _driver = Driver(tokio::spawn(connection));
-        let host = url.host_str().unwrap();
-        let authority = match url.port() {
-            Some(port) => format!("{host}:{port}"),
-            None => host.to_owned(),
-        };
-        let path = &url[url::Position::BeforePath..url::Position::AfterQuery];
-        let request = Request::builder()
-            .method(if method == reqwest::Method::HEAD {
-                hyper::Method::HEAD
-            } else {
-                hyper::Method::GET
-            })
-            .uri(if path.is_empty() { "/" } else { path })
-            .header(hyper::header::HOST, authority)
-            .header(
-                hyper::header::USER_AGENT,
-                concat!(
-                    "AoNet/",
-                    env!("CARGO_PKG_VERSION"),
-                    " local-network-diagnostics"
-                ),
-            )
-            .body(http_body_util::Empty::<Bytes>::new())
-            .map_err(|e| e.to_string())?;
-        let response = sender
-            .send_request(request)
-            .await
-            .map_err(|e| format!("HTTP request: {e}"))?;
-        let status = response.status();
-        let headers = response.headers().clone();
-        on_headers(
-            reqwest::StatusCode::from_u16(status.as_u16()).map_err(|e| e.to_string())?,
-            &headers,
-        );
-        let content_length = headers
-            .get(hyper::header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok());
-        let mut body = Vec::new();
-        let mut truncated = method != reqwest::Method::HEAD
-            && content_length.is_some_and(|length| length > MAX_BODY as u64);
-        if method != reqwest::Method::HEAD {
-            let mut incoming: Incoming = response.into_body();
-            while body.len() < MAX_BODY {
-                let Some(frame) = incoming.frame().await else {
-                    break;
-                };
-                let frame = frame.map_err(|e| format!("HTTP response body: {e}"))?;
-                if let Ok(data) = frame.into_data() {
-                    let remaining = MAX_BODY - body.len();
-                    body.extend_from_slice(&data[..data.len().min(remaining)]);
-                    if data.len() > remaining {
-                        truncated = true;
+        // Poll IO in this request's own future: cancellation drops the connection
+        // (and its socket) before returning, with no detached driver to reap.
+        let response = async {
+            let host = url.host_str().unwrap();
+            let authority = match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_owned(),
+            };
+            let path = &url[url::Position::BeforePath..url::Position::AfterQuery];
+            let request = Request::builder()
+                .method(if method == reqwest::Method::HEAD {
+                    hyper::Method::HEAD
+                } else {
+                    hyper::Method::GET
+                })
+                .uri(if path.is_empty() { "/" } else { path })
+                .header(hyper::header::HOST, authority)
+                .header(
+                    hyper::header::USER_AGENT,
+                    concat!(
+                        "AoNet/",
+                        env!("CARGO_PKG_VERSION"),
+                        " local-network-diagnostics"
+                    ),
+                )
+                .body(http_body_util::Empty::<Bytes>::new())
+                .map_err(|e| e.to_string())?;
+            let response = sender
+                .send_request(request)
+                .await
+                .map_err(|e| format!("HTTP request: {e}"))?;
+            let status = response.status();
+            let headers = response.headers().clone();
+            on_headers(
+                reqwest::StatusCode::from_u16(status.as_u16()).map_err(|e| e.to_string())?,
+                &headers,
+            );
+            let content_length = headers
+                .get(hyper::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+            let mut body = Vec::new();
+            let mut truncated = method != reqwest::Method::HEAD
+                && content_length.is_some_and(|length| length > MAX_BODY as u64);
+            if method != reqwest::Method::HEAD {
+                let mut incoming: Incoming = response.into_body();
+                while body.len() < MAX_BODY {
+                    let Some(frame) = incoming.frame().await else {
                         break;
-                    }
-                    if body.len() == MAX_BODY {
-                        truncated = content_length != Some(MAX_BODY as u64);
-                        break;
+                    };
+                    let frame = frame.map_err(|e| format!("HTTP response body: {e}"))?;
+                    if let Ok(data) = frame.into_data() {
+                        let remaining = MAX_BODY - body.len();
+                        body.extend_from_slice(&data[..data.len().min(remaining)]);
+                        if data.len() > remaining {
+                            truncated = true;
+                            break;
+                        }
+                        if body.len() == MAX_BODY {
+                            truncated = content_length != Some(MAX_BODY as u64);
+                            break;
+                        }
                     }
                 }
             }
+            Ok(HttpResponse {
+                status,
+                headers,
+                body,
+                truncated,
+                latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            })
+        };
+        tokio::pin!(connection);
+        tokio::pin!(response);
+        tokio::select! {
+            biased;
+            result = &mut response => result,
+            result = &mut connection => {
+                result.map_err(|e| format!("HTTP connection: {e}"))?;
+                response.await
+            }
         }
-        Ok(HttpResponse {
-            status,
-            headers,
-            body,
-            truncated,
-            latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-        })
     };
     tokio::select! {
         biased;

@@ -45,6 +45,7 @@ pub struct DiagnosticSnapshot {
     pub request_id: String,
     pub status: String,
     pub config: DiagnosticConfig,
+    pub route: crate::proxy_settings::RouteSnapshot,
     pub stages: DiagnosticStages,
     pub selected_ip: Option<String>,
     pub started_at: String,
@@ -61,6 +62,7 @@ impl DiagnosticSnapshot {
         let now = chrono::Utc::now().to_rfc3339();
         Self {
             id: uuid::Uuid::new_v4().to_string(), request_id: config.request_id.clone(),
+            route: crate::proxy_settings::RouteSnapshot { proxy: config.proxy.clone(), ..Default::default() },
             config, status: "running".into(), stages: DiagnosticStages::default(),
             selected_ip: None, started_at: now.clone(), updated_at: now, finished_at: None,
             warnings: vec![], limitations: vec![
