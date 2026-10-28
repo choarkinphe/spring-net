@@ -14,25 +14,27 @@
   <script src="system-settings.js" defer></script>
   <script src="network-tools.js" defer></script>
   <link rel="stylesheet" href="application-catalog.css">
+  <script src="catalog-controller.js" defer></script>
   <script src="application-catalog.js" defer></script>
   <script src="batch-tools.js" defer></script>
+  <script src="batch-tasks.js" defer></script>
 </head>
 <body>
   <main class="tool-window">
     <header class="app-header"><strong>AoNet</strong><span id="version">正在连接…</span></header>
-    <nav class="page-nav" aria-label="页面"><button id="nav-tools" type="button" aria-current="page">基础检测</button><button id="nav-catalog" type="button">应用管理</button><button id="nav-batch" type="button">批量测试</button><button id="nav-settings" type="button">代理设置</button></nav>
+    <nav class="page-nav" aria-label="页面"><button id="nav-tools" type="button" aria-current="page">基础检测</button><button id="nav-catalog" type="button">站点管理</button><button id="nav-applications" type="button">应用管理</button><button id="nav-batch" type="button">批量测试</button><button id="nav-settings" type="button">代理设置</button></nav>
     <div id="tools-page">
     <section class="tool-input" aria-labelledby="tool-title">
       <h1 id="tool-title">基础网络检测</h1>
       <p class="intro">先选择功能，再填写对应的检测目标。</p>
       <form id="tool-form">
         <fieldset class="tool-selector"><legend class="sr-only">检查工具</legend><label class="tool-choice"><input type="radio" name="tool" value="ping" checked><span>Ping</span></label><label class="tool-choice"><input type="radio" name="tool" value="traceroute"><span>Traceroute</span></label><label class="tool-choice"><input type="radio" name="tool" value="dns"><span>DNS</span></label><label class="tool-choice"><input type="radio" name="tool" value="tcp"><span>端口检测</span></label><label class="tool-choice"><input type="radio" name="tool" value="tls"><span>TLS</span></label><label class="tool-choice"><input type="radio" name="tool" value="http"><span>HTTP</span></label><label class="tool-choice"><input type="radio" name="tool" value="udp_dns"><span>UDP DNS</span></label><label class="tool-choice"><input type="radio" name="tool" value="quic"><span>QUIC</span></label></fieldset>
-        <details class="site-picker"><summary>选择应用与连接端点</summary><div class="picker-fields"><label>分类 / 组合<select id="quick-group" disabled><option value="">全部应用</option></select></label><label>应用<select id="quick-app" disabled><option value="">请选择应用</option></select></label><label>端点<select id="quick-site" disabled><option value="">请选择具体端点</option></select></label><button id="apply-site" type="button" disabled>填入地址</button></div><p id="draft-note" class="hint" role="status">仅填入检测草稿，不会自动开始。</p></details>
+        <details class="site-picker"><summary>从站点选择连接</summary><div class="picker-fields"><div id="quick-group" aria-label="类型与分组"></div><div id="quick-app" aria-label="站点"></div><div id="quick-site" aria-label="连接"></div></div><div class="picker-apply"><button id="apply-site" type="button" disabled>填入地址</button></div><p id="draft-note" class="hint" role="status">仅填入检测草稿，不会自动开始。</p></details>
         <div id="input-fields" class="input-fields">
           <div class="target-field"><label id="target-label" for="target">IP / 域名</label><input id="target" type="text" placeholder="例如 example.com 或 192.168.1.1" autocomplete="off" spellcheck="false" required maxlength="2048" aria-describedby="target-help error"></div>
           <div id="port-label" class="port-field" hidden><label for="port">端口</label><input id="port" type="number" min="1" max="65535" step="1" placeholder="例如 443" aria-describedby="target-help error"></div>
         </div>
-        <div id="udp-dns-fields" class="protocol-fields" hidden><label>查询域名<input id="dns-query-name" maxlength="253" placeholder="例如 example.com" autocomplete="off" spellcheck="false"></label><label>记录类型<select id="dns-query-type"><option value="A">A · IPv4</option><option value="AAAA">AAAA · IPv6</option></select></label></div>
+        <div id="udp-dns-fields" class="protocol-fields" hidden><label>查询域名<input id="dns-query-name" maxlength="253" placeholder="例如 example.com" autocomplete="off" spellcheck="false"></label><fieldset id="dns-query-type" class="choice-tabs"><legend>记录类型</legend><label class="tool-choice"><input type="radio" name="dns-query-type" value="A" checked><span>A · IPv4</span></label><label class="tool-choice"><input type="radio" name="dns-query-type" value="AAAA"><span>AAAA · IPv6</span></label></fieldset></div>
         <div id="quic-fields" class="protocol-fields" hidden><label>ALPN<input id="quic-alpn" maxlength="255" placeholder="填写服务器明确支持的协议标识，例如 h3" autocomplete="off" spellcheck="false"></label></div>
         <p id="target-help" class="hint">输入单个 IP 或域名，不包含协议、路径或端口。</p>
         <p id="budget" class="hint">Ping：4 次，间隔 1 秒。</p>
@@ -50,7 +52,7 @@
     </section>
     </div>
     <section id="catalog-page" class="catalog-page" aria-labelledby="catalog-title" hidden>
-      <h1 id="catalog-title" tabindex="-1">应用管理</h1><p class="intro">站点统一管理，组合只保存引用。</p>
+      <h1 id="catalog-title" tabindex="-1">站点管理</h1><p class="intro">站点统一管理，组合只保存引用。</p>
       <p id="catalog-error" class="error" role="alert" hidden></p><p id="catalog-message" class="hint" role="status"></p>
       <div class="catalog-layout">
         <aside class="catalog-sidebar" aria-label="站点分组"><div class="group-nav-heading"><strong>站点分组</strong><button id="new-group" type="button" class="add-button" title="新增组合" aria-label="新增组合" disabled>+</button></div><nav id="catalog-groups" aria-label="选择站点分组"></nav></aside>
@@ -63,11 +65,21 @@
       </div>
       <p class="hint catalog-footnote">内置站点与组合只读；首页地址不代表业务端点或可用性已经验证。保存、选择站点均不会发起网络检查。</p>
     </section>
+    <section id="applications-page" class="catalog-page" aria-labelledby="applications-title" hidden>
+      <h1 id="applications-title" tabindex="-1">应用管理</h1>
+      <p class="intro">维护软件与服务的功能连接，按标签和分组组织。</p>
+    </section>
     <section id="batch-page" class="batch-page" aria-labelledby="batch-title" hidden>
-      <div class="batch-heading"><div><h1 id="batch-title" tabindex="-1">批量测试</h1><p class="intro">选择多个组合，统一排队，逐站查看结果。</p></div><button id="batch-authorizations" type="button" class="text-button">授权端点</button></div>
+      <div class="batch-heading"><div><h1 id="batch-title" tabindex="-1">测试任务</h1><p class="intro">先保存任务，再执行；每次执行保留独立报告。</p></div><button id="task-new" type="button" class="primary">创建任务</button></div>
+      <p id="task-error" class="error" role="alert" hidden></p><p id="task-message" class="hint" role="status"></p>
+      <div id="task-active-banner" class="task-active-banner" hidden></div>
+      <section id="task-list-view" aria-label="测试任务列表"><div class="task-list-toolbar"><span id="task-list-count" class="hint"></span><button id="task-reload" type="button" class="text-button">刷新任务</button></div><ul id="task-list" class="task-list"></ul></section>
+      <section id="task-editor-view" aria-labelledby="task-editor-title" hidden>
+      <div class="task-subheading"><button id="task-editor-back" type="button" class="text-button">← 返回</button><h2 id="task-editor-title">创建测试任务</h2><button id="batch-authorizations" type="button" class="text-button">授权端点</button></div>
       <p id="batch-error" class="error" role="alert" hidden></p>
       <p id="batch-route" class="route-note" role="status">代理设置尚未核对</p>
       <form id="batch-form">
+        <label class="task-name-field">任务名称<input id="task-name" type="text" required maxlength="200" placeholder="例如：办公网络连通性检查" autocomplete="off"></label>
         <fieldset class="batch-modes"><legend class="sr-only">测试模式</legend><label class="tool-choice"><input name="batch-mode" type="radio" value="public_http" checked><span>公共连通性检查</span></label><label class="tool-choice"><input name="batch-mode" type="radio" value="authorized_http"><span>授权负载 · HTTP</span></label><label class="tool-choice"><input name="batch-mode" type="radio" value="tcp"><span>授权负载 · TCP</span></label></fieldset>
         <div class="batch-layout">
           <aside class="batch-groups-pane"><div class="group-nav-heading"><strong>选择组合</strong><button id="batch-refresh-catalog" type="button" class="text-button">刷新</button></div><div id="batch-groups"></div><p class="hint">可多选；同一站点跨组合去重，不会自动开始。</p></aside>
@@ -86,13 +98,20 @@
             </div>
             <p id="batch-budget" class="hint"></p>
             <details class="batch-target-preview"><summary id="batch-preview-title">所选站点预览</summary><ul id="batch-targets" class="batch-targets"></ul><div id="batch-target-pager" class="batch-pager"></div></details>
-            <div class="form-actions"><button id="batch-start" type="submit" class="primary" disabled>开始批量测试</button><button id="batch-stop" type="button" disabled>停止</button></div>
+            <div class="form-actions"><button id="task-editor-cancel" type="button">取消</button><button id="batch-start" type="submit" class="primary" disabled>保存任务</button></div>
           </div>
         </div>
       </form>
-      <section class="batch-results" aria-labelledby="batch-results-title"><div class="output-heading"><h2 id="batch-results-title">本次结果</h2><button id="batch-reconnect" type="button" class="text-button">重新连接</button></div><p id="batch-status" role="status">等待开始</p><p id="batch-progress" class="hint">未发起任何请求。</p><p id="batch-result-note" class="hint">HTTP 响应不等于业务成功；TCP 建连不等于业务可用。停止和总超时的未执行项不计为网络失败。</p><div id="batch-results-list"></div><div id="batch-result-pager" class="batch-pager"></div></section>
+      </section>
+      <section id="task-detail-view" aria-labelledby="task-detail-title" hidden>
+        <button id="task-detail-back" type="button" class="text-button">← 任务列表</button>
+        <div class="task-detail-heading"><div><h2 id="task-detail-title" tabindex="-1"></h2><p id="task-detail-meta" class="hint"></p></div><div class="task-detail-actions"><button id="task-edit" type="button">编辑任务</button><button id="task-run" type="button" class="primary">开始执行</button><button id="batch-stop" type="button" disabled>停止</button></div></div>
+        <details id="task-scope-section" class="task-scope-section" open><summary>执行范围与配置</summary><div id="task-scope"></div></details>
+        <div class="task-history-bar"><label for="task-history-search">搜索执行记录<input id="task-history-search" type="search" placeholder="时间、状态或执行编号" maxlength="200" autocomplete="off"></label><button id="batch-reconnect" type="button" class="text-button">刷新状态</button><button id="task-retry-archive" type="button" hidden>重试保存报告</button></div><p id="task-history-selection" class="hint" role="status"></p><ul id="task-history" class="task-history-list" aria-label="执行记录"></ul>
+        <section class="batch-results" aria-labelledby="batch-results-title"><h3 id="batch-results-title">执行过程与结果报告</h3><p id="task-execution-meta" class="hint"></p><p id="batch-status" role="status">尚未执行</p><p id="batch-progress" class="hint">保存任务不会发起请求，点击开始执行。</p><p id="batch-result-note" class="hint">HTTP 响应不等于业务成功；TCP 建连不等于业务可用。停止和总超时的未执行项不计为网络失败。</p><div id="batch-results-list"></div><div id="batch-result-pager" class="batch-pager"></div></section>
+      </section>
     </section>
-    <dialog id="batch-confirm-dialog" aria-labelledby="batch-confirm-title"><h2 id="batch-confirm-title">确认授权测试预算</h2><pre id="batch-confirm-text" class="batch-confirm-text"></pre><p class="hint">仅测试你自有或已明确获授权的专用端点；不会自动补发失败请求。</p><div class="form-actions"><button id="batch-confirm-cancel" type="button">取消</button><button id="batch-confirm-start" type="button" class="primary">确认并开始</button></div></dialog>
+    <dialog id="batch-confirm-dialog" aria-labelledby="batch-confirm-title"><h2 id="batch-confirm-title">核对本次执行</h2><pre id="batch-confirm-text" class="batch-confirm-text"></pre><p class="hint">仅测试你自有或已明确获授权的专用端点；不会自动补发失败请求。</p><div class="form-actions"><button id="batch-confirm-cancel" type="button">取消</button><button id="batch-confirm-start" type="button" class="primary">确认并开始</button></div></dialog>
     <dialog id="permit-dialog" aria-labelledby="permit-title"><h2 id="permit-title">授权端点</h2><p class="hint">只登记自有或明确获授权的专用端点；站点组合不是授权。保存授权不发起流量。</p><p id="permit-error" class="error" role="alert" hidden></p><ul id="permit-existing" class="permit-existing"></ul><details id="permit-new"><summary>登记一个授权端点</summary><form id="permit-form">
       <label class="editor-field">名称<input id="permit-name" required maxlength="200"></label><label class="editor-field">完整 URL<input id="permit-url" type="url" required placeholder="http://your-test-host:8080/"></label><label class="editor-field">允许的 IP / CIDR（每行一个）<textarea id="permit-cidrs" rows="2" required placeholder="192.0.2.10/32"></textarea></label><label class="editor-field">授权依据<textarea id="permit-evidence" rows="2" required maxlength="2000" placeholder="自有测试服务或明确的授权依据"></textarea></label>
       <details><summary>代理路径授权（仅使用代理的授权测试需要）</summary><p class="hint">配置代理不等于获得负载授权。需明确填写当前代理 URL、允许的代理 IP/CIDR 和授权依据，预览确认后才保存。</p><label class="editor-field">代理 URL<input id="permit-proxy-url" placeholder="socks5://127.0.0.1:1080" autocomplete="off"></label><label class="editor-field">允许的代理 IP / CIDR（每行一个）<textarea id="permit-proxy-cidrs" rows="2"></textarea></label><label class="editor-field">代理路径授权依据<textarea id="permit-proxy-evidence" rows="2" maxlength="2000"></textarea></label></details>
@@ -106,7 +125,7 @@
       <p class="proxy-notice">可保存多组代理，同时只启用一组。支持无认证 HTTP CONNECT / SOCKS5，不修改操作系统代理。启用后会自动定时连接代理端点做可用性检查，不连接目标也不验证转发。代理失败不会回退直连。</p>
       <p class="proxy-notice">TCP、TLS、HTTP 及连接类批量测试自动采用当前配置。Ping、Traceroute、DNS 始终为本机直连 / 系统解析，不经过代理；连接测试的目标域名同样在本机解析。</p>
     </section>
-    <dialog id="proxy-editor" aria-labelledby="proxy-editor-title"><form id="proxy-editor-form"><h2 id="proxy-editor-title">新增代理</h2><label class="editor-field">名称<input id="proxy-name" required maxlength="200" autocomplete="off"></label><label class="editor-field">类型<select id="proxy-type"><option value="http">HTTP CONNECT</option><option value="socks5">SOCKS5</option></select></label><div class="proxy-editor-address"><label class="editor-field">主机<input id="proxy-host" required maxlength="253" placeholder="127.0.0.1 或 proxy.example.com" autocomplete="off" spellcheck="false"></label><label class="editor-field">端口<input id="proxy-port" type="number" min="1" max="65535" required></label></div><p class="hint">本版仅支持无认证代理，不填写用户名或密码。</p><p id="proxy-editor-error" class="error" role="alert" hidden></p><div class="form-actions"><button id="proxy-editor-cancel" type="button">取消</button><button id="proxy-editor-save" type="submit" class="primary">保存</button></div></form></dialog>
+    <dialog id="proxy-editor" aria-labelledby="proxy-editor-title"><form id="proxy-editor-form"><h2 id="proxy-editor-title">新增代理</h2><label class="editor-field">名称<input id="proxy-name" required maxlength="200" autocomplete="off"></label><fieldset id="proxy-type" class="choice-tabs editor-choice"><legend>类型</legend><label class="tool-choice"><input type="radio" name="proxy-type" value="http" checked><span>HTTP CONNECT</span></label><label class="tool-choice"><input type="radio" name="proxy-type" value="socks5"><span>SOCKS5</span></label></fieldset><div class="proxy-editor-address"><label class="editor-field">主机<input id="proxy-host" required maxlength="253" placeholder="127.0.0.1 或 proxy.example.com" autocomplete="off" spellcheck="false"></label><label class="editor-field">端口<input id="proxy-port" type="number" min="1" max="65535" required></label></div><p class="hint">本版仅支持无认证代理，不填写用户名或密码。</p><p id="proxy-editor-error" class="error" role="alert" hidden></p><div class="form-actions"><button id="proxy-editor-cancel" type="button">取消</button><button id="proxy-editor-save" type="submit" class="primary">保存</button></div></form></dialog>
     <dialog id="proxy-delete" aria-labelledby="proxy-delete-title"><h2 id="proxy-delete-title">删除代理</h2><p id="proxy-delete-text"></p><div class="form-actions"><button id="proxy-delete-cancel" type="button">取消</button><button id="proxy-delete-confirm" type="button" class="danger">确认删除</button></div></dialog>
     <dialog id="catalog-dialog" aria-labelledby="editor-title"><form id="catalog-editor">
       <h2 id="editor-title">新增站点</h2><p id="editor-hint" class="hint"></p>

@@ -1,6 +1,8 @@
 pub mod api;
 pub mod batch;
 pub mod batch_service;
+pub mod batch_task_service;
+pub mod batch_task_store;
 pub mod catalog_batch;
 pub(crate) mod catalog_batch_worker;
 #[cfg(test)]
@@ -35,3 +37,6 @@ pub mod storage;
 pub(crate) mod udp_dns;
 #[cfg(test)]
 mod workspace_tests;
+
+#[cfg(test)]
+mod batch_task_tests;

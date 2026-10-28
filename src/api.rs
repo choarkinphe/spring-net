@@ -4,7 +4,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Request, State},
+    extract::{DefaultBodyLimit, Path, Request, State},
     http::{HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{
@@ -116,6 +116,7 @@ pub fn router(state: App) -> Router {
         )
         .route("/transport.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/transport.js")) }))
         .route("/site-catalog.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/site-catalog.js")) }))
+        .route("/catalog-controller.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/catalog-controller.js")) }))
         .route("/application-catalog.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/application-catalog.js")) }))
         .route("/application-catalog.css", get(|| async { ([(header::CONTENT_TYPE,"text/css; charset=utf-8")],include_str!("../web/application-catalog.css")) }))
         .route("/network-tools.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/network-tools.js")) }))
@@ -151,6 +152,15 @@ pub fn router(state: App) -> Router {
         .route("/app-shell.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/app-shell.js")) }))
         .route("/batch-tools.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/batch-tools.js")) }))
         .route("/batch-tools.css", get(|| async { ([(header::CONTENT_TYPE,"text/css; charset=utf-8")],include_str!("../web/batch-tools.css")) }))
+        .route("/batch-tasks.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")],include_str!("../web/batch-tasks.js")) }))
+        .route("/api/batch-tasks",get(batch_tasks_list).post(batch_tasks_create))
+        .route("/api/batch-tasks/:id",get(batch_tasks_get).put(batch_tasks_update))
+        .route("/api/batch-tasks/:id/preflight",post(batch_tasks_preflight))
+        .route("/api/batch-tasks/:id/executions",get(batch_execution_list).post(batch_execution_start))
+        .route("/api/batch-executions/active",get(batch_execution_active))
+        .route("/api/batch-executions/:id",get(batch_execution_get))
+        .route("/api/batch-executions/:id/stop",post(batch_execution_stop))
+        .route("/api/batch-executions/:id/retry-archive",post(batch_execution_retry_archive))
         .route("/api/catalog-batch/info",get(catalog_batch_info))
         .route("/api/catalog-batch/start",post(catalog_batch_start))
         .route("/api/catalog-batch/state",get(catalog_batch_state))
@@ -524,4 +534,114 @@ async fn export_csv(State(s): State<App>) -> Response {
             .into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
     }
+}
+
+async fn batch_tasks_list(State(s): State<App>) -> Json<Value> {
+    Json(s.service.batch_tasks_list())
+}
+async fn batch_tasks_create(
+    State(s): State<App>,
+    Json(r): Json<crate::batch_task_service::CreateRequest>,
+) -> ApiResult {
+    s.service
+        .batch_tasks_create(r)
+        .await
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_tasks_get(State(s): State<App>, Path(id): Path<String>) -> ApiResult {
+    s.service
+        .batch_tasks_get(crate::batch_task_service::TaskRequest { task_id: id })
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_tasks_update(
+    State(s): State<App>,
+    Path(id): Path<String>,
+    Json(r): Json<crate::batch_task_service::UpdateRequest>,
+) -> ApiResult {
+    if id != r.task_id {
+        return Err(error("path/task_id mismatch".into()));
+    }
+    s.service
+        .batch_tasks_update(r)
+        .await
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_tasks_preflight(
+    State(s): State<App>,
+    Path(id): Path<String>,
+    Json(r): Json<crate::batch_task_service::PreflightRequest>,
+) -> ApiResult {
+    if id != r.task_id {
+        return Err(error("path/task_id mismatch".into()));
+    }
+    s.service
+        .batch_tasks_preflight(r)
+        .await
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_execution_list(State(s): State<App>, Path(id): Path<String>) -> ApiResult {
+    s.service
+        .batch_execution_list(crate::batch_task_service::TaskRequest { task_id: id })
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_execution_start(
+    State(s): State<App>,
+    Path(id): Path<String>,
+    Json(r): Json<crate::batch_task_service::StartRequest>,
+) -> ApiResult {
+    if id != r.task_id {
+        return Err(error("path/task_id mismatch".into()));
+    }
+    s.service
+        .batch_execution_start(r)
+        .await
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_execution_active(State(s): State<App>) -> ApiResult {
+    s.service
+        .batch_execution_active()
+        .await
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_execution_get(State(s): State<App>, Path(id): Path<String>) -> ApiResult {
+    s.service
+        .batch_execution_get(crate::batch_task_service::ExecutionRequest { execution_id: id })
+        .await
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_execution_stop(
+    State(s): State<App>,
+    Path(id): Path<String>,
+    Json(r): Json<crate::batch_task_service::ExecutionRequest>,
+) -> ApiResult {
+    if id != r.execution_id {
+        return Err(error("path/execution_id mismatch".into()));
+    }
+    s.service
+        .batch_execution_stop(r)
+        .await
+        .map(Json)
+        .map_err(error)
+}
+async fn batch_execution_retry_archive(
+    State(s): State<App>,
+    Path(id): Path<String>,
+    Json(r): Json<crate::batch_task_service::ExecutionRequest>,
+) -> ApiResult {
+    if id != r.execution_id {
+        return Err(error("path/execution_id mismatch".into()));
+    }
+    s.service
+        .batch_execution_retry_archive(r)
+        .await
+        .map(Json)
+        .map_err(error)
 }

@@ -18,6 +18,7 @@ fn request(mode: Mode) -> Request {
         catalog_revision: 1,
         group_ids: vec!["g".into()],
         site_ids: vec![],
+        resource_selections: None,
         mode,
         permit_bindings: vec![],
         concurrency: 4,
@@ -60,6 +61,7 @@ fn fixture(address: &str, n: usize) -> (site_catalog::Snapshot, Permit) {
         application: site_catalog::Application {
             id: "app".into(),
             name: "fixture application".into(),
+            kind: site_catalog::ApplicationKind::Application,
             category: site_catalog::ApplicationCategory::Custom,
             provider: String::new(),
             product: String::new(),
@@ -68,6 +70,8 @@ fn fixture(address: &str, n: usize) -> (site_catalog::Snapshot, Permit) {
             site_ids: sites.iter().map(|s| s.site.id.clone()).collect(),
             reference_rules: vec![],
         },
+        tag_ids: vec![],
+        supplement: None,
         builtin: false,
         sources: vec![],
         missing: vec![],
@@ -82,17 +86,20 @@ fn fixture(address: &str, n: usize) -> (site_catalog::Snapshot, Permit) {
             id: "g".into(),
             name: "group".into(),
             description: String::new(),
+            tag_ids: vec![],
             application_ids: vec!["app".into()],
         },
         builtin: false,
     };
     (
         site_catalog::Snapshot {
-            version: 2,
             revision: 1,
             sites,
             applications,
             groups: vec![group],
+            ..site_catalog::Manager::new(tempfile::tempdir().unwrap().path(), &[])
+                .unwrap()
+                .snapshot()
         },
         Permit {
             id: "p".into(),
@@ -267,6 +274,133 @@ fn authorized_load_still_obeys_the_bound_permit_before_resource_checks() {
     r.normalize().unwrap();
     let error = freeze(&r, &catalog, &[permit], None).unwrap_err();
     assert!(error.contains("permit"));
+}
+
+#[test]
+fn explicit_resource_provenance_excludes_unselected_shared_endpoint_applications() {
+    let (mut catalog, permit) = fixture("http://127.0.0.1:18080/path", 2);
+    let mut alias = catalog.applications[0].clone();
+    alias.application.id = "alias".into();
+    alias.application.site_ids = vec!["s0".into()];
+    catalog.applications.push(alias);
+    catalog.groups[0].group.application_ids.push("alias".into());
+    let mut second = catalog.groups[0].clone();
+    second.group.id = "g2".into();
+    catalog.groups.push(second);
+    let mut r = request(Mode::AuthorizedHttp);
+    r.group_ids.push("g2".into());
+    r.resource_selections = Some(vec![ResourceSelection {
+        group_id: "g2".into(),
+        resource_id: "alias".into(),
+    }]);
+    bind(&mut r, 1);
+    r.normalize().unwrap();
+    for frozen in [
+        freeze_definition(&r, &catalog, None).unwrap(),
+        freeze(&r, &catalog, std::slice::from_ref(&permit), None)
+            .unwrap()
+            .0,
+    ] {
+        assert_eq!(frozen.sites.len(), 1);
+        assert_eq!(frozen.sites[0].site_id, "s0");
+        assert_eq!(frozen.sites[0].group_ids, ["g2"]);
+        assert_eq!(
+            frozen.sites[0]
+                .applications
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect::<Vec<_>>(),
+            ["alias"]
+        );
+    }
+    // None retains legacy source expansion, including applications sharing the endpoint.
+    r.resource_selections = None;
+    r.site_ids = vec!["s0".into()];
+    let legacy = freeze(&r, &catalog, &[permit], None).unwrap().0;
+    assert_eq!(legacy.sites[0].applications.len(), 2);
+    assert_eq!(legacy.sites[0].group_ids, ["g", "g2"]);
+}
+
+#[test]
+fn resource_pairs_are_bounded_unique_and_validated_against_server_projection() {
+    let (catalog, _) = fixture("http://127.0.0.1:18080/path", 1);
+    let mut r = request(Mode::AuthorizedHttp);
+    bind(&mut r, 1);
+    let pair = ResourceSelection {
+        group_id: "g".into(),
+        resource_id: "app".into(),
+    };
+    for selections in [
+        vec![pair.clone(), pair.clone()],
+        vec![pair.clone(); 10001],
+        vec![ResourceSelection {
+            group_id: "other".into(),
+            ..pair.clone()
+        }],
+        vec![ResourceSelection {
+            resource_id: "".into(),
+            ..pair.clone()
+        }],
+        vec![ResourceSelection {
+            resource_id: "x".repeat(201),
+            ..pair.clone()
+        }],
+    ] {
+        r.resource_selections = Some(selections);
+        assert!(r.normalize().is_err());
+    }
+    for selections in [
+        vec![],
+        vec![ResourceSelection {
+            resource_id: "missing".into(),
+            ..pair.clone()
+        }],
+    ] {
+        r.resource_selections = Some(selections);
+        r.normalize().unwrap();
+        assert!(freeze_definition(&r, &catalog, None).is_err());
+    }
+    r.resource_selections = Some(vec![pair]);
+    r.normalize().unwrap();
+    let mut detached = catalog.clone();
+    detached.groups[0].group.application_ids.clear();
+    assert!(
+        freeze_definition(&r, &detached, None)
+            .unwrap_err()
+            .contains("not in selected group")
+    );
+    let mut missing_group = catalog;
+    missing_group.groups.clear();
+    assert!(
+        freeze_definition(&r, &missing_group, None)
+            .unwrap_err()
+            .contains("unknown group")
+    );
+}
+
+#[test]
+fn omitted_resource_selection_preserves_legacy_request_intent_bytes() {
+    let mut r = request(Mode::AuthorizedHttp);
+    bind(&mut r, 1);
+    r.normalize().unwrap();
+    let bytes = serde_json::to_vec(&r).unwrap();
+    assert!(
+        !String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("resource_selections")
+    );
+    let old: Request = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(old.resource_selections, None);
+    assert_eq!(serde_json::to_vec(&old).unwrap(), bytes);
+    let mut explicit = old.clone();
+    explicit.resource_selections = Some(vec![ResourceSelection {
+        group_id: "g".into(),
+        resource_id: "app".into(),
+    }]);
+    assert_ne!(serde_json::to_vec(&explicit).unwrap(), bytes);
+    let mut unknown = serde_json::to_value(explicit).unwrap();
+    unknown["resource_selections"][0]["url"] = serde_json::json!("http://invalid/");
+    assert!(serde_json::from_value::<Request>(unknown).is_err());
 }
 
 fn bind(r: &mut Request, n: usize) {
@@ -868,11 +1002,8 @@ async fn catalog_http_and_socks_proxy_keep_head_driver_pinning_and_frozen_route(
             .start_catalog_with_route(
                 r.clone(),
                 &site_catalog::Snapshot {
-                    version: 2,
                     revision: 999,
-                    sites: vec![],
-                    applications: vec![],
-                    groups: vec![],
+                    ..catalog.clone()
                 },
                 &[],
                 proxy_route("invalid-new-route".into()),

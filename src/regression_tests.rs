@@ -721,6 +721,7 @@ impl ApiFixture {
             service: Arc::new(crate::service::AppService {
                 engine,
                 batches,
+                batch_tasks: crate::batch_task_service::Tasks::open(data.path()).unwrap(),
                 network_tools: crate::network_tools::NetworkToolManager::new(shutdown.clone())
                     .with_control_port(Some(port)),
                 diagnostics: crate::diagnostics::DiagnosticManager::new(
@@ -1172,11 +1173,20 @@ async fn catalog_api_is_inert_shared_and_revision_guarded() {
             .status(),
         StatusCode::UNPROCESSABLE_ENTITY
     );
-    let mut body = json!({"schema_version":2,"expected_revision":0,
+    let old_v2 =
+        json!({"schema_version":2,"expected_revision":0,"sites":[],"applications":[],"groups":[]});
+    assert_eq!(
+        f.send(f.write_request("PUT", "/api/site-catalog", old_v2))
+            .await
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let mut body = json!({"schema_version":3,"expected_revision":0,
         "sites":[{"id":"shared","name":"Shared","address":"example.invalid","port":443,"transport":"tcp","protocol":"tls","purpose":"auth","alpn":null}],
-        "applications":[{"id":"shared-app","name":"Shared application","category":"custom","provider":"","product":"","aliases":[],"access_type":"desktop","site_ids":["shared"],"reference_rules":[]}],
-        "groups":[{"id":"one","name":"One","description":"","application_ids":["shared-app"]},
-                  {"id":"two","name":"Two","description":"","application_ids":["shared-app"]}]});
+        "applications":[{"id":"shared-app","name":"Shared application","kind":"application","category":"custom","provider":"","product":"","aliases":[],"access_type":"desktop","site_ids":["shared"],"reference_rules":[]}],
+        "groups":[{"id":"one","name":"One","description":"","tag_ids":["tag-one"]},{"id":"two","name":"Two","description":"","tag_ids":["tag-two"]}],
+        "tags":[{"id":"tag-one","name":"One"},{"id":"tag-two","name":"Two"}],
+        "tag_assignments":[{"resource_id":"shared-app","tag_ids":["tag-one","tag-two"]}],"resource_supplements":[]});
     let response = f
         .send(f.write_request("PUT", "/api/site-catalog", body.clone()))
         .await;
@@ -1312,7 +1322,7 @@ async fn catalog_batch_http_guards_info_query_and_cross_module_lifecycle() {
     let catalog = service.site_catalog();
     let catalog = service
         .save_site_catalog(crate::site_catalog::SaveRequest {
-            schema_version: 2,
+            schema_version: 3,
             expected_revision: catalog.revision,
             sites: vec![crate::site_catalog::Site {
                 id: "custom-fixture".into(),
@@ -1327,6 +1337,7 @@ async fn catalog_batch_http_guards_info_query_and_cross_module_lifecycle() {
             applications: vec![crate::site_catalog::Application {
                 id: "fixture-app".into(),
                 name: "fixture app".into(),
+                kind: crate::site_catalog::ApplicationKind::Website,
                 category: crate::site_catalog::ApplicationCategory::Web,
                 provider: String::new(),
                 product: String::new(),
@@ -1335,12 +1346,21 @@ async fn catalog_batch_http_guards_info_query_and_cross_module_lifecycle() {
                 site_ids: vec!["custom-fixture".into()],
                 reference_rules: vec![],
             }],
-            groups: vec![crate::site_catalog::Group {
+            groups: vec![crate::site_catalog::GroupInput {
                 id: "custom-group".into(),
                 name: "fixture".into(),
                 description: String::new(),
-                application_ids: vec!["fixture-app".into()],
+                tag_ids: vec!["fixture-tag".into()],
             }],
+            tags: vec![crate::site_catalog::Tag {
+                id: "fixture-tag".into(),
+                name: "Fixture tag".into(),
+            }],
+            tag_assignments: vec![crate::site_catalog::TagAssignment {
+                resource_id: "fixture-app".into(),
+                tag_ids: vec!["fixture-tag".into()],
+            }],
+            resource_supplements: vec![],
         })
         .await
         .unwrap();
@@ -1390,11 +1410,14 @@ async fn catalog_batch_http_guards_info_query_and_cross_module_lifecycle() {
     assert!(
         service
             .save_site_catalog(crate::site_catalog::SaveRequest {
-                schema_version: 2,
+                schema_version: 3,
                 expected_revision: catalog.revision,
                 sites: vec![],
                 applications: vec![],
-                groups: vec![]
+                groups: vec![],
+                tags: vec![],
+                tag_assignments: vec![],
+                resource_supplements: vec![]
             })
             .await
             .is_err()
@@ -1432,4 +1455,119 @@ async fn catalog_batch_http_guards_info_query_and_cross_module_lifecycle() {
     assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
     service.batches.settle().await.unwrap();
     service.shutdown_and_wait().await;
+}
+
+#[tokio::test]
+async fn batch_task_http_guards_strict_dtos_unknown_reconciliation_and_zero_network_create() {
+    let f = ApiFixture::new();
+    let id = uuid::Uuid::new_v4().to_string();
+    for path in [
+        "/api/batch-tasks".to_owned(),
+        "/api/batch-executions/active".into(),
+        format!("/api/batch-executions/{id}"),
+    ] {
+        let response = f
+            .send(
+                Request::builder()
+                    .uri(path)
+                    .header("host", f.host())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let response = f
+        .send(
+            Request::builder()
+                .uri("/api/batch-tasks")
+                .header("host", "attacker.invalid")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    for path in [
+        "/api/batch-tasks".to_owned(),
+        format!("/api/batch-tasks/{id}/preflight"),
+        format!("/api/batch-tasks/{id}/executions"),
+        format!("/api/batch-executions/{id}/stop"),
+        format!("/api/batch-executions/{id}/retry-archive"),
+    ] {
+        let response = f
+            .send(
+                Request::builder()
+                    .method("POST")
+                    .uri(&path)
+                    .header("host", f.host())
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response = f
+            .send(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("host", f.host())
+                    .header("origin", "http://attacker.invalid")
+                    .header("content-type", "application/json")
+                    .header("x-aonet-token", &f.state.token)
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    let body = json!({"task_id":id,"create_id":uuid::Uuid::new_v4().to_string(),"name":"Saved public task","catalog_revision":f.state.service.site_catalog.snapshot().revision,"config":{"group_ids":[],"site_ids":[],"mode":"public_http","permit_bindings":[],"concurrency":1,"connection_limit":1,"queue_capacity":1,"attempts_per_site":1,"start_rate":1,"request_timeout_secs":1,"batch_timeout_secs":2}});
+    let mut bad = body.clone();
+    bad["builtin"] = json!(true);
+    let response = f
+        .send(f.write_request("POST", "/api/batch-tasks", bad))
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let catalog = f.state.service.site_catalog.snapshot();
+    assert!(catalog.groups.is_empty());
+    // Fixture catalog has no builtin groups; malformed input never starts work.
+    let response = f
+        .send(f.write_request("POST", "/api/batch-tasks", body))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let response = f
+        .send(f.write_request(
+            "POST",
+            &format!("/api/batch-executions/{id}/stop"),
+            json!({"execution_id":uuid::Uuid::new_v4().to_string()}),
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        f.state
+            .service
+            .batches
+            .catalog_state(None)
+            .await
+            .unwrap()
+            .snapshot
+            .is_none()
+    );
+    let response = f
+        .send(
+            Request::builder()
+                .uri(format!("/api/batch-executions/{id}"))
+                .header("host", f.host())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    let value: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1048576)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value["accepted"], false);
+    assert_eq!(value["execution"], Value::Null);
 }

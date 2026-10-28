@@ -718,6 +718,7 @@ mod tests {
             catalog_revision: 1,
             group_ids: vec!["g".into()],
             site_ids: vec![],
+            resource_selections: None,
             mode: Mode::PublicHttp,
             permit_bindings: vec![],
             concurrency: 4,

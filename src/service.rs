@@ -51,6 +51,7 @@ pub struct AppService {
         )>,
     >,
     pub(crate) batches: crate::batch_service::BatchManager,
+    pub(crate) batch_tasks: crate::batch_task_service::Tasks,
     pub(crate) history: crate::history::History,
     pub lists: RwLock<Vec<SiteList>>,
     pub(crate) site_catalog: crate::site_catalog::Manager,
@@ -109,6 +110,7 @@ impl AppService {
         Ok(Self {
             engine,
             batches,
+            batch_tasks: crate::batch_task_service::Tasks::open(&config.data)?,
             diagnostics: DiagnosticManager::new(config.control_port, shutdown.clone()),
             network_tools: crate::network_tools::NetworkToolManager::new(shutdown.clone())
                 .with_control_port(config.control_port),
@@ -340,6 +342,9 @@ impl AppService {
         let proxy = self.effective_proxy(proxy)?;
         self.engine.settle().await?;
         self.batches.settle().await?;
+        if self.batch_tasks.store.active().is_some() {
+            return Err("task execution active or awaiting report archive".into());
+        }
         self.diagnostics.settle().await?;
         self.network_tools.settle().await?;
         if crate::monitor_worker::monitor_dns_pending()
@@ -426,6 +431,9 @@ impl AppService {
         self.ensure_monitor_idle()?;
         self.engine.settle().await?;
         self.batches.settle().await?;
+        if self.batch_tasks.store.active().is_some() {
+            return Err("task execution active or awaiting report archive".into());
+        }
         self.diagnostics.settle().await?;
         self.network_tools
             .start_with_route(request, self.proxy_settings.route())
@@ -440,7 +448,7 @@ impl AppService {
     ) -> Result<crate::network_tools::Snapshot, String> {
         self.network_tools.stop(id).await
     }
-    async fn catalog_batch_external_busy_sources(&self) -> Vec<String> {
+    pub(crate) async fn catalog_batch_external_busy_sources(&self) -> Vec<String> {
         // Observations only: do not settle tasks, acquire the mutation gate, or
         // start DNS. network_tools has its own independent frontend lock source.
         let mut sources = Vec::new();
@@ -501,6 +509,17 @@ impl AppService {
         mut request: crate::catalog_batch::Request,
     ) -> Result<crate::catalog_batch::Snapshot, String> {
         request.normalize()?;
+        if self
+            .batch_tasks
+            .store
+            .execution(&request.request_id)?
+            .is_some()
+        {
+            return Err(
+                "request_id belongs to a durable task execution; query batch-executions instead"
+                    .into(),
+            );
+        }
         let _gate = self.mutation.lock().await;
         self.proxy_health.pause();
         if let Some(existing) = self.batches.existing_catalog(&request).await? {
@@ -547,12 +566,23 @@ impl AppService {
         request: crate::batch_service::RunBatchRequest,
     ) -> Result<crate::batch_service::BatchSnapshot, String> {
         let _gate = self.mutation.lock().await;
+        if self
+            .batch_tasks
+            .store
+            .execution(&request.request_id)?
+            .is_some()
+        {
+            return Err("request_id belongs to a durable task execution".into());
+        }
         self.proxy_health.pause();
         if let Some(existing) = self.batches.existing_request(&request).await? {
             return Ok(existing);
         }
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出".into());
+        }
+        if self.batch_tasks.store.active().is_some() {
+            return Err("task execution active or awaiting report archive".into());
         }
         self.ensure_monitor_idle()?;
         self.engine.settle().await?;
@@ -592,6 +622,9 @@ impl AppService {
         }
         self.ensure_monitor_idle()?;
         self.batches.settle().await?;
+        if self.batch_tasks.store.active().is_some() {
+            return Err("task execution active or awaiting report archive".into());
+        }
         self.diagnostics.settle().await?;
         self.network_tools.settle().await?;
         let lists = self.lists.read().await.clone();
@@ -626,6 +659,9 @@ impl AppService {
         }
         self.ensure_monitor_idle()?;
         self.batches.settle().await?;
+        if self.batch_tasks.store.active().is_some() {
+            return Err("task execution active or awaiting report archive".into());
+        }
         self.engine.settle().await?;
         self.network_tools.settle().await?;
         self.effective_proxy(config.proxy.clone())?;
@@ -659,15 +695,24 @@ impl AppService {
         all.extend(lists);
         Ok(())
     }
-    async fn ensure_mutable(&self) -> Result<(), String> {
+    pub(crate) async fn ensure_mutable(&self) -> Result<(), String> {
         if self.shutdown.is_cancelled() {
             return Err("应用正在退出".into());
         }
         self.ensure_monitor_idle()?;
         self.engine.settle().await?;
         self.batches.settle().await?;
+        if self.batch_tasks.store.active().is_some() {
+            return Err("task execution active or awaiting report archive".into());
+        }
         self.diagnostics.settle().await?;
         self.network_tools.settle().await?;
+        if self.batch_tasks.store.active().is_some() {
+            return Err(
+                "a task execution is active or awaiting report archive; retry saving its report"
+                    .into(),
+            );
+        }
         Ok(())
     }
     pub async fn prepare_permits(&self, mut permits: Vec<Permit>) -> Result<Value, String> {

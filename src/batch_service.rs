@@ -71,6 +71,7 @@ struct CatalogEntry {
     request: crate::catalog_batch::Request,
     snapshot: Arc<Mutex<crate::catalog_batch::Snapshot>>,
     cancel: CancellationToken,
+    archive: Option<crate::batch_task_store::Store>,
     task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
 }
 #[derive(Default)]
@@ -85,6 +86,8 @@ pub struct BatchManager {
     cooldown_path: PathBuf,
     control_port: Option<u16>,
     shutdown: CancellationToken,
+    #[cfg(test)]
+    test_worker_panic: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     test_dns: Mutex<Option<Arc<crate::catalog_batch_worker::TestDns>>>,
     #[cfg(test)]
@@ -103,10 +106,17 @@ impl BatchManager {
             control_port,
             shutdown,
             #[cfg(test)]
+            test_worker_panic: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
             test_dns: Mutex::new(None),
             #[cfg(test)]
             test_proxy_dns: Mutex::new(None),
         }
+    }
+    #[cfg(test)]
+    pub(crate) fn panic_next_catalog_worker(&self) {
+        self.test_worker_panic
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
     #[cfg(test)]
     pub(crate) fn set_test_dns(&self, resolver: Arc<crate::catalog_batch_worker::TestDns>) {
@@ -449,6 +459,14 @@ impl BatchManager {
                 *handle = None;
                 result.map_err(|e| format!("catalog batch task failed: {e}"))?;
             }
+            if let Some(store) = &entry.archive
+                && !store.archived(id)
+            {
+                return Err(
+                    "report archive failed; retry saving the report before starting another batch"
+                        .into(),
+                );
+            }
             // Reaping a handle is not acceptance of a replacement request.
         }
         Ok(())
@@ -480,10 +498,32 @@ impl BatchManager {
     }
     pub async fn start_catalog_with_route(
         &self,
+        request: crate::catalog_batch::Request,
+        catalog: &crate::site_catalog::Snapshot,
+        permits: &[crate::model::Permit],
+        route: RouteSnapshot,
+    ) -> Result<crate::catalog_batch::Snapshot, String> {
+        self.start_catalog_inner(request, catalog, permits, route, None)
+            .await
+    }
+    pub async fn start_catalog_archived(
+        &self,
+        request: crate::catalog_batch::Request,
+        catalog: &crate::site_catalog::Snapshot,
+        permits: &[crate::model::Permit],
+        route: RouteSnapshot,
+        archive: crate::batch_task_store::Store,
+    ) -> Result<crate::catalog_batch::Snapshot, String> {
+        self.start_catalog_inner(request, catalog, permits, route, Some(archive))
+            .await
+    }
+    async fn start_catalog_inner(
+        &self,
         mut request: crate::catalog_batch::Request,
         catalog: &crate::site_catalog::Snapshot,
         permits: &[crate::model::Permit],
         mut route: RouteSnapshot,
+        archive: Option<crate::batch_task_store::Store>,
     ) -> Result<crate::catalog_batch::Snapshot, String> {
         request.normalize()?;
         if let Some(existing) = self.existing_catalog(&request).await? {
@@ -553,7 +593,83 @@ impl BatchManager {
             #[cfg(test)]
             test_proxy_dns: self.test_proxy_dns.lock().unwrap().clone(),
         };
-        let task = tokio::spawn(worker.run());
+        // This supervisor owns completion and checkpointing. It never acquires manager.state:
+        // reap/settle can safely join it while holding that lock.
+        let watched = snapshot.clone();
+        let store = archive.clone();
+        let id = request.request_id.clone();
+        let worker_cancel = cancel.clone();
+        let app_shutdown = self.shutdown.clone();
+        #[cfg(test)]
+        let test_pending_dns = self.test_dns.lock().unwrap().clone();
+        #[cfg(test)]
+        let test_panic = self
+            .test_worker_panic
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        let task = tokio::spawn(async move {
+            if let Some(store) = &store {
+                let _ = store.checkpoint(
+                    &id,
+                    watched.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+                );
+            }
+            let mut work = tokio::spawn(async move {
+                #[cfg(test)]
+                assert!(!test_panic, "fixture worker panic");
+                worker.run().await;
+            });
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            tick.tick().await;
+            let mut last = Vec::new();
+            let result = loop {
+                tokio::select! {
+                    result = &mut work => break result,
+                    _ = tick.tick(), if store.is_some() => {
+                        let value = watched.lock().unwrap_or_else(|e|e.into_inner()).clone();
+                        if let Ok(bytes) = serde_json::to_vec(&value) && bytes != last
+                            && let Some(store) = &store && store.checkpoint(&id,value).is_ok() { last = bytes; }
+                    }
+                }
+            };
+            if let Err(error) = result {
+                worker_cancel.cancel();
+                watched.clear_poison();
+                // A panicked worker dropped its futures. OS DNS may still be draining;
+                // do not publish a terminal report until those resources are gone.
+                while policy::target_dns_pending() != 0 || proxy::proxy_dns_pending() != 0 || {
+                    #[cfg(test)]
+                    {
+                        test_pending_dns.as_ref().is_some_and(|dns| {
+                            dns.pending.load(std::sync::atomic::Ordering::SeqCst) != 0
+                        })
+                    }
+                    #[cfg(not(test))]
+                    {
+                        false
+                    }
+                } {
+                    watched.lock().unwrap_or_else(|e| e.into_inner()).status = "draining".into();
+                    tokio::select! {
+                        _=app_shutdown.cancelled()=> {
+                            let value={let mut snapshot=watched.lock().unwrap_or_else(|e|e.into_inner());snapshot.status="draining".into();snapshot.error=Some("application exiting after worker panic with OS DNS still draining".into());snapshot.clone()};
+                            if let Some(store)=&store {let _=store.checkpoint(&id,value);}
+                            return;
+                        },
+                        _=tokio::time::sleep(Duration::from_millis(25))=>{}
+                    }
+                }
+                let mut value = watched.lock().unwrap_or_else(|e| e.into_inner());
+                value.status = "failed".into();
+                value.error = Some(format!(
+                    "worker join failed; report may be incomplete: {error}"
+                ));
+            }
+            if let Some(store) = &store {
+                let value = watched.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let _ = store.finish(&id, value);
+            }
+        });
         Self::compact_current(&mut state);
         state.current = Some(request.request_id.clone());
         state.catalog_entries.insert(
@@ -562,6 +678,7 @@ impl BatchManager {
                 request,
                 snapshot,
                 cancel,
+                archive,
                 task: Arc::new(AsyncMutex::new(Some(task))),
             },
         );
@@ -672,6 +789,11 @@ impl BatchManager {
                     let result = task.await;
                     *handle = None;
                     result.map_err(|e| e.to_string())?;
+                }
+                if let Some(store) = &entry.archive
+                    && !store.archived(&id)
+                {
+                    return Err("report archive failed; retry saving the report before starting another operation".into());
                 }
                 return Ok(());
             }
@@ -1161,6 +1283,7 @@ mod tests {
                     request: request.clone(),
                     snapshot,
                     cancel,
+                    archive: None,
                     task: Arc::new(AsyncMutex::new(Some(task))),
                 },
             );
@@ -1245,6 +1368,7 @@ mod tests {
                     request: catalog_request.clone(),
                     snapshot: catalog_snapshot,
                     cancel: CancellationToken::new(),
+                    archive: None,
                     task: Arc::new(AsyncMutex::new(None)),
                 },
             );
@@ -1263,11 +1387,14 @@ mod tests {
                 .start_catalog(
                     bad,
                     &crate::site_catalog::Snapshot {
-                        version: 2,
+                        version: 3,
                         revision: 99,
                         sites: vec![],
                         applications: vec![],
-                        groups: vec![]
+                        groups: vec![],
+                        tags: vec![],
+                        tag_assignments: vec![],
+                        resource_supplements: vec![]
                     },
                     &[]
                 )

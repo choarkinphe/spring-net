@@ -22,9 +22,17 @@ pub struct PermitBinding {
     pub permit_id: String,
 }
 
+/// Explicit server-derived group/resource provenance, independent of shared endpoints.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceSelection {
+    pub group_id: String,
+    pub resource_id: String,
+}
+
 // Missing is None; explicit null is not an integer and is rejected. In particular,
 // an HTTP request cannot smuggle a TCP-only parameter through as null.
-fn present_integer<'de, D: Deserializer<'de>>(d: D) -> Result<Option<usize>, D::Error> {
+pub(crate) fn present_integer<'de, D: Deserializer<'de>>(d: D) -> Result<Option<usize>, D::Error> {
     usize::deserialize(d).map(Some)
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +42,9 @@ pub struct Request {
     pub catalog_revision: u64,
     pub group_ids: Vec<String>,
     pub site_ids: Vec<String>,
+    // Omitted for legacy requests/reports to preserve their serialized intent bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_selections: Option<Vec<ResourceSelection>>,
     pub mode: Mode,
     pub permit_bindings: Vec<PermitBinding>,
     pub concurrency: usize,
@@ -67,7 +78,8 @@ pub struct StateRequest {
 pub struct StopRequest {
     pub request_id: String,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StateResponse {
     pub request_id: Option<String>,
     pub accepted: bool,
@@ -84,6 +96,27 @@ pub fn canonical_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 impl Request {
+    fn validate_resource_selections(&self) -> Result<(), String> {
+        if let Some(selections) = &self.resource_selections {
+            if selections.len() > 10000 {
+                return Err("resource selection limit exceeded (10000)".into());
+            }
+            let mut seen = HashSet::new();
+            for selection in selections {
+                if [&selection.group_id, &selection.resource_id]
+                    .iter()
+                    .any(|id| id.is_empty() || id.len() > 200)
+                    || !self.group_ids.contains(&selection.group_id)
+                {
+                    return Err("invalid resource selection identity or unselected group".into());
+                }
+                if !seen.insert((&selection.group_id, &selection.resource_id)) {
+                    return Err("duplicate group/resource selection".into());
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn normalize(&mut self) -> Result<(), String> {
         canonical_id(&self.request_id)?;
         let public = self.mode == Mode::PublicHttp;
@@ -119,6 +152,10 @@ impl Request {
         } else if self.per_site_connections.is_some() || self.tcp_hold_secs.is_some() {
             return Err("HTTP modes forbid TCP-only parameters".into());
         }
+        self.validate_resource_selections()?;
+        if let Some(selections) = &mut self.resource_selections {
+            selections.sort();
+        }
         self.group_ids.sort();
         self.site_ids.sort();
         self.permit_bindings
@@ -141,7 +178,8 @@ pub(crate) struct Target {
     pub url: Url,
     pub permit: Option<Permit>,
 }
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Counts {
     pub planned: usize,
     pub pending_generation: usize,
@@ -156,12 +194,14 @@ pub struct Counts {
     pub terminal: usize,
     pub unexecuted: usize,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApplicationIdentity {
     pub id: String,
     pub name: String,
 }
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SiteResult {
     pub site_id: String,
     pub name: String,
@@ -193,7 +233,8 @@ pub struct SiteResult {
     #[serde(skip)]
     pub(crate) latency_total_ms: f64,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Attempt {
     pub sequence: usize,
     pub site_id: String,
@@ -241,7 +282,8 @@ impl Attempt {
         }
     }
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Snapshot {
     pub request_id: String,
     pub config: Request,
@@ -273,11 +315,51 @@ pub(crate) fn freeze(
     permits: &[Permit],
     control_port: Option<u16>,
 ) -> Result<(Snapshot, Vec<Target>), String> {
+    freeze_inner(request, catalog, permits, control_port, true)
+}
+
+pub(crate) fn freeze_definition(
+    request: &Request,
+    catalog: &site_catalog::Snapshot,
+    control_port: Option<u16>,
+) -> Result<Snapshot, String> {
+    freeze_inner(request, catalog, &[], control_port, false).map(|(snapshot, _)| snapshot)
+}
+fn freeze_inner(
+    request: &Request,
+    catalog: &site_catalog::Snapshot,
+    permits: &[Permit],
+    control_port: Option<u16>,
+    authorize: bool,
+) -> Result<(Snapshot, Vec<Target>), String> {
     if catalog.revision != request.catalog_revision {
         return Err("catalog revision conflict; reload before starting".into());
     }
-    if catalog.version != 2 {
-        return Err("catalog schema v2 required".into());
+    if catalog.version != 3 {
+        return Err("catalog schema v3 required".into());
+    }
+    request.validate_resource_selections()?;
+    let selected_resources: Option<HashSet<_>> =
+        request.resource_selections.as_ref().map(|selections| {
+            selections
+                .iter()
+                .map(|s| (s.group_id.as_str(), s.resource_id.as_str()))
+                .collect()
+        });
+    if let Some(selections) = &request.resource_selections {
+        for selection in selections {
+            let group = catalog
+                .groups
+                .iter()
+                .find(|g| g.group.id == selection.group_id)
+                .ok_or_else(|| format!("unknown group: {}", selection.group_id))?;
+            if !group.group.application_ids.contains(&selection.resource_id) {
+                return Err(format!(
+                    "resource is not in selected group: {}/{}",
+                    selection.group_id, selection.resource_id
+                ));
+            }
+        }
     }
     let mut memberships: HashMap<&str, Vec<String>> = HashMap::new();
     let mut applications: HashMap<&str, Vec<ApplicationIdentity>> = HashMap::new();
@@ -291,12 +373,24 @@ pub(crate) fn freeze(
             return Err(format!("empty group: {id}"));
         }
         for app_id in &group.group.application_ids {
+            if selected_resources
+                .as_ref()
+                .is_some_and(|selections| !selections.contains(&(id.as_str(), app_id.as_str())))
+            {
+                continue;
+            }
             let app = &catalog
                 .applications
                 .iter()
                 .find(|a| &a.application.id == app_id)
                 .ok_or_else(|| format!("group {id} contains unknown application: {app_id}"))?
                 .application;
+            if !authorize
+                && !request.site_ids.is_empty()
+                && !app.site_ids.iter().any(|id| request.site_ids.contains(id))
+            {
+                continue;
+            }
             if app.site_ids.is_empty() {
                 return Err(format!(
                     "application {app_id} has no concrete endpoints; reference rules cannot be probed"
@@ -408,6 +502,8 @@ pub(crate) fn freeze(
             let permit = if request.mode == Mode::PublicHttp {
                 policy::check_public_url(&url)?;
                 None
+            } else if !authorize {
+                None
             } else {
                 let id = bindings.get(site.id.as_str()).ok_or("missing permit")?;
                 let p = permits
@@ -458,7 +554,7 @@ pub(crate) fn freeze(
                     endpoint: target.url.to_string(),
                     group_ids: groups.clone(),
                     applications: applications.remove(site.id.as_str()).unwrap_or_default(),
-                    permit_id: target.permit.as_ref().map(|p| p.id.clone()),
+                    permit_id: bindings.get(site.id.as_str()).map(|id| (*id).to_owned()),
                     planned: request.attempts_per_site,
                     ..Default::default()
                 });

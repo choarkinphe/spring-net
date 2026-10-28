@@ -52,6 +52,7 @@ fn required_active_id<'de, D: serde::Deserializer<'de>>(
 
 /// Frozen at task admission; historical results keep this value after settings change.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RouteSnapshot {
     pub settings_revision: u64,
     pub profile_id: Option<String>,

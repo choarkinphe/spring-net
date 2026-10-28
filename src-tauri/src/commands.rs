@@ -346,3 +346,60 @@ pub async fn export_dialog(
     .await
     .map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub async fn batch_tasks_list(state:State<'_,DesktopState>,request:aonet::batch_task_service::EmptyRequest)->Result<Value,String>{
+    let _ = request;
+    Ok(state.service().await?.batch_tasks_list())
+}
+
+#[tauri::command]
+pub async fn batch_tasks_create(state:State<'_,DesktopState>,request:aonet::batch_task_service::CreateRequest)->Result<Value,String>{
+    state.service().await?.batch_tasks_create(request).await
+}
+
+#[tauri::command]
+pub async fn batch_tasks_get(state:State<'_,DesktopState>,request:aonet::batch_task_service::TaskRequest)->Result<Value,String>{
+    state.service().await?.batch_tasks_get(request)
+}
+
+#[tauri::command]
+pub async fn batch_tasks_update(state:State<'_,DesktopState>,request:aonet::batch_task_service::UpdateRequest)->Result<Value,String>{
+    state.service().await?.batch_tasks_update(request).await
+}
+
+#[tauri::command]
+pub async fn batch_tasks_preflight(state:State<'_,DesktopState>,request:aonet::batch_task_service::PreflightRequest)->Result<Value,String>{
+    state.service().await?.batch_tasks_preflight(request).await
+}
+
+#[tauri::command]
+pub async fn batch_execution_list(state:State<'_,DesktopState>,request:aonet::batch_task_service::TaskRequest)->Result<Value,String>{
+    state.service().await?.batch_execution_list(request)
+}
+
+#[tauri::command]
+pub async fn batch_execution_start(state:State<'_,DesktopState>,request:aonet::batch_task_service::StartRequest)->Result<Value,String>{
+    state.service().await?.batch_execution_start(request).await
+}
+
+#[tauri::command]
+pub async fn batch_execution_active(state:State<'_,DesktopState>,request:aonet::batch_task_service::EmptyRequest)->Result<Value,String>{
+    let _ = request;
+    state.service().await?.batch_execution_active().await
+}
+
+#[tauri::command]
+pub async fn batch_execution_get(state:State<'_,DesktopState>,request:aonet::batch_task_service::ExecutionRequest)->Result<Value,String>{
+    state.service().await?.batch_execution_get(request).await
+}
+
+#[tauri::command]
+pub async fn batch_execution_stop(state:State<'_,DesktopState>,request:aonet::batch_task_service::ExecutionRequest)->Result<Value,String>{
+    state.service().await?.batch_execution_stop(request).await
+}
+
+#[tauri::command]
+pub async fn batch_execution_retry_archive(state:State<'_,DesktopState>,request:aonet::batch_task_service::ExecutionRequest)->Result<Value,String>{
+    state.service().await?.batch_execution_retry_archive(request).await
+}

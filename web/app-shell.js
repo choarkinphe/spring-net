@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  const locks=new Map([["tools",true],["batch",true]]),listeners=new Set(),pages=new Set(["tools","catalog","batch","settings"]);
+  const locks=new Map([["tools",true],["batch",true]]),listeners=new Set(),pages=new Set(["tools","catalog","applications","batch","settings"]);
   let page="tools";
   function show(next){
     if(!pages.has(next))return;

@@ -48,6 +48,7 @@
   function render(){
     window.appShell?.setLocked("settings",ownLocked());
     const disabled=blocked();$("proxy-add").disabled=disabled;$("proxy-editor-save").disabled=disabled;$("proxy-editor-cancel").disabled=state.saving;$("proxy-delete-confirm").disabled=disabled;$("proxy-delete-cancel").disabled=state.saving;
+    for(const id of ["proxy-name","proxy-type","proxy-host","proxy-port"])$(id).disabled=disabled;
     $("proxy-current").textContent=state.snapshot&&!state.unknown?`当前采用：${routeLabel()}`:"代理设置尚未核对；不会自动使用直连。";
     $("proxy-busy").textContent=window.appShell?.isLockedExcept("settings")?"检测运行、收尾或状态不确定期间，代理设置只读。":"启用后每 30 秒自动检查代理端点；不建立常驻隧道，不验证目标转发。";
     const list=$("proxy-list");list.replaceChildren();if(!state.snapshot)return;
@@ -61,13 +62,13 @@
   function openEditor(profile=null){
     if(blocked())return;state.focus=document.activeElement;state.editor={id:profile?.id||null,revision:state.snapshot.revision};
     $("proxy-editor-title").textContent=profile?"编辑代理":"新增代理";$("proxy-name").value=profile?.name||"";const url=profile?new URL(profile.url):null;
-    $("proxy-type").value=url?.protocol==="socks5:"?"socks5":"http";$("proxy-host").value=url?.hostname.replace(/^\[|\]$/g,"")||"";
+    document.querySelectorAll('input[name="proxy-type"]').forEach(n=>n.checked=n.value===(url?.protocol==="socks5:"?"socks5":"http"));$("proxy-host").value=url?.hostname.replace(/^\[|\]$/g,"")||"";
     $("proxy-port").value=url?(url.port||(url.protocol==="http:"?"80":"")):"";text("proxy-editor-error","");$("proxy-editor").showModal();$("proxy-name").focus();
   }
   function closeEditor(){if(state.saving)return;$("proxy-editor").close();state.editor=null;restoreFocus();}
   function restoreFocus(){if(state.focus?.isConnected)state.focus.focus();else $("proxy-add").focus();}
   function profileDraft(id){
-    const name=$("proxy-name").value.trim(),host=$("proxy-host").value.trim(),raw=$("proxy-port").value,type=$("proxy-type").value;
+    const name=$("proxy-name").value.trim(),host=$("proxy-host").value.trim(),raw=$("proxy-port").value,type=document.querySelector('input[name="proxy-type"]:checked')?.value;
     if(!name||new TextEncoder().encode(name).length>200)throw new Error("名称不能为空且不能超过 200 个 UTF-8 字节。");
     if(!host||/[\s/@?#\\]/.test(host)||host.includes("://")||!['http','socks5'].includes(type))throw new Error("主机请仅填写域名或 IP，不包含协议、路径或账号密码。");
     const port=Number(raw);if(!/^\d+$/.test(raw)||!Number.isInteger(port)||port<1||port>65535)throw new Error("端口必须是 1～65535 的整数。");

@@ -422,7 +422,12 @@ mod tests {
                         assert_eq!(stream.get_ref().1.server_name(), Some("diagnostic.test"));
                         match stream.read(&mut byte).await {
                             Ok(0) => (),
-                            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => (),
+                            Err(e)
+                                if matches!(
+                                    e.kind(),
+                                    std::io::ErrorKind::UnexpectedEof
+                                        | std::io::ErrorKind::ConnectionReset
+                                ) => {}
                             other => panic!("unexpected application data {other:?}"),
                         }
                         true

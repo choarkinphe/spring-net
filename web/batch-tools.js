@@ -11,7 +11,7 @@
     return state.info?.limits?.[publicMode?"public_http":"authorized"]||{max_concurrency:publicMode?4:1000,max_connections:publicMode?4:1000,max_attempts_per_site:publicMode?3:100,max_start_rate:publicMode?2:1000,max_batch_timeout_secs:publicMode?120:300};
   }
   const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  const state={info:null,catalog:null,groups:new Set(),excludedApplications:new Set(),bindings:new Map(),snapshot:null,known:false,pending:false,uncertain:null,owned:null,externalBusy:false,externalSources:[],read:null,epoch:0,timer:null,preview:null,permitDraft:null,permitBusy:false,permitUnknown:false,nativeWrites:0,targetPage:0,resultPage:0,resultSignature:null};
+  const state={info:null,catalog:null,groups:new Set(),excludedApplications:new Set(),excludedSites:new Set(),bindings:new Map(),permitQueries:new Map(),snapshot:null,known:false,pending:false,uncertain:null,owned:null,externalBusy:false,externalSources:[],read:null,epoch:0,timer:null,preview:null,permitDraft:null,permitBusy:false,permitUnknown:false,nativeWrites:0,targetPage:0,resultPage:0,resultSignature:null};
   function message(id,value){$(id).textContent=value;$(id).hidden=!value;}
   function errorText(error){return String(error?.message||error||"未知错误");}
   function mode(){return document.querySelector('input[name="batch-mode"]:checked')?.value||"public_http";}
@@ -26,11 +26,12 @@
     if(!state.catalog)return [];
     return state.catalog.groups.filter(g=>state.groups.has(g.id)).flatMap(g=>groupApplications(g).filter(a=>!state.excludedApplications.has(`${g.id}/${a.id}`)));
   }
-  function selectedSites(){
+  function candidateSites(){
     if(!state.catalog)return [];
     const ids=new Set(selectedApplications().flatMap(a=>a.site_ids));
     return state.catalog.sites.filter(s=>ids.has(s.id));
   }
+  function selectedSites(){return candidateSites().filter(s=>!state.excludedSites.has(s.id));}
   function endpointIssue(site){
     const tcp=mode()==="tcp",allowed=tcp?["http","https","tcp","tls","other"]:["http","https"];
     if(site.transport!=="tcp"||!allowed.includes(site.protocol)||!site.capabilities?.includes(tcp?"tcp":"http"))return tcp?"此端点不支持 TCP 批量：需要明确的 TCP 传输与可建连协议；UDP、QUIC、未知协议和规则不可用。":"HTTP 批量只支持 TCP 上的明确 HTTP/HTTPS 端点。";
@@ -49,8 +50,8 @@
     return "";
   }
   function selectionIssue(){
-    if(state.catalog?.version!==2||!Array.isArray(state.catalog.applications))return "需要 v2 应用目录，请重新读取。";
-    for(const id of state.groups){const group=state.catalog.groups.find(g=>g.id===id);if(!group)return "所选组合不存在，请重新读取。";if(!group.application_ids.length)return "组合中没有应用。";for(const appId of group.application_ids){const app=state.catalog.applications.find(a=>a.id===appId);if(!app)return "组合引用的应用不存在。";if(app.site_ids.some(id=>!state.catalog.sites.some(s=>s.id===id)))return "应用引用的端点不存在。";if(!state.excludedApplications.has(`${id}/${appId}`)){const issue=applicationIssue(app);if(issue)return `${app.name}：${issue}`;}}}
+    if(state.catalog?.version!==3||!Array.isArray(state.catalog.applications))return "需要 v3 应用目录，请重新读取。";
+    for(const id of state.groups){const group=state.catalog.groups.find(g=>g.id===id);if(!group)return "所选组合不存在，请重新读取。";if(!group.application_ids.length)return "组合中没有应用。";for(const appId of group.application_ids){const app=state.catalog.applications.find(a=>a.id===appId);if(!app)return "组合引用的应用不存在。";if(!state.excludedApplications.has(`${id}/${appId}`)){if(!app.site_ids.length)return `${app.name}：没有明确端点，请取消选择此应用。`;for(const siteId of app.site_ids){if(state.excludedSites.has(siteId))continue;const site=state.catalog.sites.find(s=>s.id===siteId);if(!site)return "应用引用的端点不存在。";const issue=endpointIssue(site);if(issue)return `${app.name} / ${site.name}：${issue} 请取消选择该端点。`;}}}}
     return "";
   }
   function hostPort(site){
@@ -77,7 +78,9 @@
     if(sites.length>1000)throw new Error("每批最多 1000 个站点。");
     const issues=sites.map(s=>[s,siteIssue(s)]).filter(([,reason])=>reason);if(issues.length)throw new Error(issues.slice(0,5).map(([s,r])=>`${s.name}：${r}`).join("\n")+(issues.length>5?`\n另有 ${issues.length-5} 项，请检查站点预览。`:""));
     if(!publicMode&&state.info?.authorization_error)throw new Error(`授权配置需修复：${state.info.authorization_error}`);
-    const body={request_id:requestId,catalog_revision:state.catalog.revision,group_ids:[...state.groups].sort(),site_ids:sites.map(s=>s.id).sort(),mode:testMode,
+    const resource_selections=state.catalog.groups.filter(g=>state.groups.has(g.id)).flatMap(g=>groupApplications(g).filter(a=>!state.excludedApplications.has(`${g.id}/${a.id}`)).map(a=>({group_id:g.id,resource_id:a.id}))).sort((a,b)=>a.group_id.localeCompare(b.group_id)||a.resource_id.localeCompare(b.resource_id));
+    if(resource_selections.length>10000)throw new Error("每批最多 10000 个组合/资源来源。");
+    const body={request_id:requestId,catalog_revision:state.catalog.revision,group_ids:[...state.groups].sort(),site_ids:sites.map(s=>s.id).sort(),resource_selections,mode:testMode,
       permit_bindings:publicMode?[]:sites.map(s=>({site_id:s.id,permit_id:state.bindings.get(s.id)})),
       concurrency:number("batch-concurrency",1,limits.max_concurrency,"执行并发"),connection_limit:number("batch-connections",1,limits.max_connections,"连接上限"),queue_capacity:number("batch-queue",1,256,"队列容量"),
       attempts_per_site:number("batch-attempts",1,limits.max_attempts_per_site,"每站次数"),start_rate:number("batch-rate",1,limits.max_start_rate,"起发速率"),request_timeout_secs:number("batch-timeout",1,30,"单次超时"),batch_timeout_secs:number("batch-duration",1,limits.max_batch_timeout_secs,"批次总时限"),confirmed_authorized:!publicMode&&confirmed};
@@ -115,43 +118,49 @@
     if(!reply||typeof reply.accepted!=="boolean"||typeof reply.external_busy!=="boolean"||!Array.isArray(reply.external_busy_sources)||!reply.external_busy_sources.every(s=>typeof s==="string")||!Object.hasOwn(reply,"snapshot")||!valid(reply.snapshot)||(reply.accepted&&!reply.snapshot)||(!reply.accepted&&reply.snapshot!==null)||(queriedId&&reply.request_id!==queriedId)||(reply.snapshot&&reply.snapshot.request_id!==reply.request_id))throw new Error("批次状态格式无效，保留最近结果。");
     return reply.snapshot;
   }
-  async function readState(){
+  async function readState(force=false){
     if(state.read)return state.read;const epoch=state.epoch;
-    const op=(async()=>{
-      if(state.uncertain){const id=state.uncertain,reply=await request("state",null,id);const exact=acceptState(reply,id);if(epoch!==state.epoch)return;
-        if(exact){state.snapshot=exact;state.owned=id;state.uncertain=null;}
-        else message("batch-error","后台尚未记录该请求，仍保留启动结果待核对锁。请重新连接；不会自动重发或据此断言原请求已结束。");
-      }
-      if(state.pending)return;
-      const reply=await request("state");const current=acceptState(reply);if(epoch!==state.epoch||state.pending)return;
-      state.externalBusy=reply.external_busy===true;state.externalSources=reply.external_busy_sources||[];
-      if(current)state.snapshot=current;else if(active()&&!state.uncertain&&!state.pending&&!state.nativeWrites)state.snapshot=null;state.known=true;render();
-    })().catch(e=>{if(epoch===state.epoch){state.known=false;message("batch-error",errorText(e));renderControls();}});
+    if(state.pending&&!force)return;
+    const op=request("state").then(reply=>{const current=acceptState(reply);if(epoch!==state.epoch)return;state.snapshot=current;state.externalBusy=reply.external_busy;state.externalSources=reply.external_busy_sources;state.known=true;renderControls();}).catch(e=>{if(epoch===state.epoch){state.known=false;message("batch-error",errorText(e));renderControls();}});
     state.read=op;try{await op;}finally{if(state.read===op)state.read=null;}
   }
-  function poll(){clearTimeout(state.timer);const epoch=state.epoch;state.timer=setTimeout(async()=>{await readState();if(epoch===state.epoch)poll();},1000);}
   async function info(){const result=await request("info");if(!result||typeof result.version!=="string"||!Array.isArray(result.authorized)||!result.authorized.every(p=>typeof p.id==="string"&&typeof p.name==="string"&&typeof p.url==="string"&&Array.isArray(p.modes)&&Array.isArray(p.allowed_ips)&&typeof p.expires_at==="string")||!Number.isSafeInteger(result.auth_revision)||(!native&&typeof result.token!=="string"))throw new Error("批量初始化信息无效。");state.info=result;}
   async function connect(){
     state.known=false;renderControls();
-    try{await info();await readState();renderGroups();renderTargets();renderPermits();poll();}catch(e){message("batch-error",errorText(e));renderControls();}
+    try{await info();await readState();renderGroups();renderTargets();renderPermits();}catch(e){message("batch-error",errorText(e));renderControls();}
   }
   function renderGroups(){
     const root=$("batch-groups"),focus=document.activeElement?.dataset.batchGroup;root.replaceChildren();
-    for(const group of state.catalog?.groups||[]){const label=el("label"),check=el("input"),apps=groupApplications(group),siteCount=new Set(apps.flatMap(a=>a.site_ids)).size,issue=groupIssue(group);const text=el("span",`${group.name} · ${apps.length} 个应用 / ${siteCount} 个端点${group.builtin?" · 内置":""}${issue?` · 不可选：${issue}`:""}`);check.type="checkbox";check.dataset.batchGroup=group.id;check.checked=state.groups.has(group.id);check.disabled=locked()||Boolean(issue&&!check.checked);check.dataset.batchUnavailable=check.checked?"":issue;check.addEventListener("change",()=>{if(locked())return;if(check.checked)state.groups.add(group.id);else state.groups.delete(group.id);state.preview=null;state.targetPage=0;renderGroups();renderControls();renderTargets();});label.append(check,text);root.append(label);if(check.checked)for(const app of apps){const appLabel=el("label",undefined,"batch-application-option"),appCheck=el("input"),appText=el("span",`${app.name} · ${(app.site_ids||[]).length} 个端点${applicationIssue(app)?` · 不可用：${applicationIssue(app)}`:""}`);appCheck.type="checkbox";appCheck.checked=!state.excludedApplications.has(`${group.id}/${app.id}`);appCheck.disabled=locked()||Boolean(applicationIssue(app));appCheck.dataset.batchUnavailable=applicationIssue(app);appCheck.addEventListener("change",()=>{if(appCheck.checked)state.excludedApplications.delete(`${group.id}/${app.id}`);else state.excludedApplications.add(`${group.id}/${app.id}`);state.preview=null;state.targetPage=0;renderControls();renderGroups();renderTargets();});appLabel.append(appCheck,appText);root.append(appLabel);}if(focus===group.id)check.focus();}
+    for(const group of state.catalog?.groups||[]){const label=el("label"),check=el("input"),apps=groupApplications(group),siteCount=new Set(apps.flatMap(a=>a.site_ids)).size,issue=groupIssue(group);const text=el("span",`${group.name} · ${apps.length} 个应用 / ${siteCount} 个端点${group.builtin?" · 内置":""}${issue?" · 含需核对的应用/端点":""}`);check.type="checkbox";check.dataset.batchGroup=group.id;check.checked=state.groups.has(group.id);check.disabled=locked();check.dataset.batchUnavailable="";check.addEventListener("change",()=>{if(locked())return;if(check.checked)state.groups.add(group.id);else state.groups.delete(group.id);state.preview=null;state.targetPage=0;renderGroups();renderControls();renderTargets();});label.append(check,text);root.append(label);if(check.checked)for(const app of apps){const appLabel=el("label",undefined,"batch-application-option"),appCheck=el("input"),appText=el("span",`${app.name} · ${(app.site_ids||[]).length} 个端点${applicationIssue(app)?` · 不可用：${applicationIssue(app)}`:""}`);appCheck.type="checkbox";appCheck.checked=!state.excludedApplications.has(`${group.id}/${app.id}`);appCheck.disabled=locked();appCheck.dataset.batchUnavailable="";appCheck.addEventListener("change",()=>{if(appCheck.checked)state.excludedApplications.delete(`${group.id}/${app.id}`);else state.excludedApplications.add(`${group.id}/${app.id}`);state.preview=null;state.targetPage=0;renderControls();renderGroups();renderTargets();});appLabel.append(appCheck,appText);root.append(appLabel);}if(focus===group.id)check.focus();}
     if(!state.catalog)root.append(el("p","站点库尚未读取。","hint"));
   }
   function pager(id,total,page,onPage){const root=$(id);root.replaceChildren();const pages=Math.ceil(total/25);if(pages<=1)return;root.append(button("上一页",()=>onPage(page-1),page===0),el("span",`${page+1} / ${pages}`),button("下一页",()=>onPage(page+1),page>=pages-1));}
+  function permitPicker(site){
+    const fieldset=el("fieldset",undefined,"batch-permit-picker"),legend=el("legend",`${site.name} · 绑定授权端点`),label=el("label","搜索匹配授权"),search=el("input"),choices=el("div",undefined,"batch-permit-choices");
+    search.type="search";search.placeholder="名称、地址或授权编号";search.maxLength=200;search.value=state.permitQueries.get(site.id)||"";search.disabled=locked();search.setAttribute("aria-label",`${site.name} 搜索授权`);const selection=el("p",undefined,"batch-permit-selected hint");label.append(search);fieldset.append(legend,label,choices,selection);
+    function renderChoices(){
+      const query=search.value.trim().toLocaleLowerCase(),permits=matchingPermits(site);choices.replaceChildren();
+      for(const permit of permits){
+        if(query&&!`${permit.name} ${permit.url} ${permit.id}`.toLocaleLowerCase().includes(query))continue;
+        const choice=el("label"),radio=el("input"),text=el("span",`${permit.name} · ${permit.url}`);radio.type="radio";radio.name=`batch-permit-${site.id}`;radio.value=permit.id;radio.checked=state.bindings.get(site.id)===permit.id;radio.disabled=locked();
+        radio.addEventListener("change",()=>{if(locked()||!radio.checked)return;state.bindings.set(site.id,permit.id);state.preview=null;renderControls();renderChoices();});choice.append(radio,text);choices.append(choice);
+      }
+      if(!choices.children.length)choices.append(el("p",permits.length?"没有匹配搜索的授权；清空搜索查看全部。":"没有精确匹配的有效授权，请先登记授权端点。","hint"));
+      const selected=permits.find(p=>p.id===state.bindings.get(site.id));selection.textContent=selected?`已绑定：${selected.name} · ${selected.id}`:"尚未绑定授权";
+    }
+    search.addEventListener("input",()=>{state.permitQueries.set(site.id,search.value);renderChoices();});renderChoices();return fieldset;
+  }
   function renderTargets(){
-    const sites=selectedSites(),root=$("batch-targets");root.replaceChildren();state.targetPage=Math.min(state.targetPage,Math.max(0,Math.ceil(sites.length/25)-1));
+    const sites=candidateSites(),root=$("batch-targets");root.replaceChildren();state.targetPage=Math.min(state.targetPage,Math.max(0,Math.ceil(sites.length/25)-1));
     $("batch-preview-title").textContent=`所选站点预览 · ${sites.length} 个`;
     for(const site of sites.slice(state.targetPage*25,state.targetPage*25+25)){
       const li=el("li"),names=state.catalog.groups.filter(g=>state.groups.has(g.id)&&groupApplications(g).some(a=>!state.excludedApplications.has(`${g.id}/${a.id}`)&&a.site_ids.includes(site.id))).map(g=>g.name),apps=[...new Map(selectedApplications().filter(a=>a.site_ids.includes(site.id)).map(a=>[a.id,a])).values()];
-      li.append(el("strong",site.name),el("p",site.address+(site.port?` · 默认端口 ${site.port}`:"")+` · ${site.transport} / ${site.protocol}`,"hint"),el("p",`${names.join("、")} · 应用：${apps.map(a=>a.name).join("、")}`,"hint"));
-      if(mode()!=="public_http"){
-        const label=el("label","绑定授权端点"),select=el("select");select.setAttribute("aria-label",`${site.name} 的授权端点`);const placeholder=el("option","请选择匹配授权");placeholder.value="";select.append(placeholder);
-        for(const p of matchingPermits(site)){const option=el("option",`${p.name} · ${p.url}`);option.value=p.id;select.append(option);}select.value=state.bindings.get(site.id)||"";select.disabled=locked();select.addEventListener("change",()=>{state.bindings.set(site.id,select.value);state.preview=null;renderControls();renderTargets();});label.append(select);li.append(label);
+      const include=el("input");include.type="checkbox";include.checked=!state.excludedSites.has(site.id);include.disabled=locked();include.setAttribute("aria-label",`包含端点 ${site.name}`);include.addEventListener("change",()=>{if(include.checked)state.excludedSites.delete(site.id);else state.excludedSites.add(site.id);renderControls();renderTargets();});const title=el("label");title.append(include,el("strong",site.name));
+      li.append(title,el("p",site.address+(site.port?` · 默认端口 ${site.port}`:"")+` · ${site.transport} / ${site.protocol}`,"hint"),el("p",`${names.join("、")} · 应用：${apps.map(a=>a.name).join("、")}`,"hint"));
+      if(mode()!=="public_http"&&!state.excludedSites.has(site.id)){
+        li.append(permitPicker(site));
       }
-      const issue=siteIssue(site);if(issue)li.append(el("p",issue,"batch-target-error"));root.append(li);
+      const issue=state.excludedSites.has(site.id)?"已排除，不会执行。":siteIssue(site);if(issue)li.append(el("p",issue,"batch-target-error"));root.append(li);
     }
     if(!sites.length)root.append(el("li","尚未选择站点，或所选组合为空。"));
     pager("batch-target-pager",sites.length,state.targetPage,page=>{state.targetPage=page;renderTargets();});
@@ -162,18 +171,19 @@
     $("batch-selection").textContent=state.groups.size?`已选 ${state.groups.size} 个组合 · ${sites.length} 个唯一站点 · 计划 ${sites.length*(Number($("batch-attempts").value)||0)} 次尝试`:"请选择至少一个组合。";
     for(const id of ["batch-concurrency","batch-connections","batch-queue","batch-attempts","batch-rate","batch-timeout","batch-duration"])$(id).disabled=disabled;
     $("batch-concurrency").max=String(limits.max_concurrency);$("batch-connections").max=String(limits.max_connections);$("batch-attempts").max=String(limits.max_attempts_per_site);$("batch-rate").max=String(limits.max_start_rate);$("batch-duration").max=String(limits.max_batch_timeout_secs);
-    for(const node of document.querySelectorAll('input[name="batch-mode"],#batch-groups input,#batch-targets select'))node.disabled=disabled||Boolean(node.dataset.batchUnavailable);
+    for(const node of document.querySelectorAll('input[name="batch-mode"],#batch-groups input,#batch-targets input'))node.disabled=disabled||Boolean(node.dataset.batchUnavailable);
     for(const node of document.querySelectorAll(".batch-tcp-field"))node.hidden=!tcp;
     for(const id of ["batch-per-site","batch-hold"])$(id).disabled=disabled||!tcp;
     $("batch-attempts-label").firstChild.textContent=tcp?"每站建连次数":"每站请求次数";$("batch-timeout-label").firstChild.textContent=tcp?"建连超时 / 秒":"单次超时 / 秒";
     $("batch-budget").textContent=publicMode?"这是公共连通性检查，不是负载性能测试。仅 HEAD / HTTP1 短连接；全局最多 2 次/秒，同域至少间隔 30 秒。冷却与排队计入总时限，计划次数可能不能全部执行。":tcp?"授权 TCP 连接负载：参数由页面设置，实际受端点授权与系统可用资源约束。成功连接保持后释放，不发送应用数据、失败不自动补满。执行并发包括建连与保持。":"授权 HTTP 请求负载：参数由页面设置，实际受端点授权与系统可用资源约束。固定 HEAD / HTTP1 独立短连接，不重试、不跳转、不读取正文。连接上限不是连接复用池。";
-    $("batch-start").disabled=disabled||!sites.length||Boolean(selectionIssue())||sites.some(s=>siteIssue(s));$("batch-stop").disabled=!state.known||state.pending||!active()||state.owned!==state.snapshot?.request_id||["stopping","draining"].includes(state.snapshot?.status);
-    $("batch-refresh-catalog").disabled=disabled;$("batch-authorizations").disabled=disabled||!state.info;$("batch-confirm-start").disabled=locked()||!state.preview;
+    $("batch-start").disabled=disabled||!sites.length||Boolean(selectionIssue())||sites.some(s=>siteIssue(s));
+    window.batchTasks?.renderControls();
+    $("batch-refresh-catalog").disabled=disabled;$("batch-authorizations").disabled=disabled||!state.info;
   }
   function renderResults(){
-    const s=state.snapshot;
-    $("batch-status").textContent=state.externalBusy?`其他网络任务仍在运行或收尾：${state.externalSources.join("、")}`:state.uncertain?"启动结果待核对，不会自动重发":!state.known?"后台状态尚未连接":s?`${modes[s.config.mode]} · ${statuses[s.status]}${s.route?` · ${window.proxySettings?.label(null,s.route)||""}`:""}${state.owned!==s.request_id?"（其他窗口的批次，仅查看）":""}`:"等待开始";
-    if(!s){$("batch-progress").textContent="未发起任何请求。";return;}
+    const s=state.displaySnapshot===undefined?state.snapshot:state.displaySnapshot;
+    $("batch-status").textContent=state.externalBusy?`其他网络任务仍在运行或收尾：${state.externalSources.join("、")}`:state.uncertain?"启动结果待核对，不会自动重发":!state.known?"后台状态尚未连接":s?`${modes[s.config.mode]} · ${statuses[s.status]}${s.route?` · ${window.proxySettings?.label(null,s.route)||""}`:""}${state.displaySnapshot===undefined&&state.owned!==s.request_id?"（其他窗口的批次，仅查看）":""}`:"等待开始";
+    if(!s){$("batch-status").textContent="尚未执行";$("batch-progress").textContent="保存任务不会发起请求，点击开始执行。";$("batch-results-list").replaceChildren();$("batch-result-pager").replaceChildren();state.resultSignature=null;return;}
     const c=s.counts;$("batch-progress").textContent=`计划 ${c.planned} · 待生成 ${c.pending_generation} · 排队 ${c.queued} · 等待准入 ${c.waiting_admission} · 执行 ${c.active} · 已终结 ${c.terminal} · 未执行 ${c.unexecuted}；连接额度 ${c.connection_permits}（峰值 ${c.peak_connection_permits}）${s.config.mode==="tcp"?` · 已建立 ${c.connected}（峰值 ${c.peak_connected}）`:""}${s.error?`；${s.error}`:""}`;
     const open=[...$("batch-results-list").querySelectorAll("details[open]")].map(n=>n.dataset.siteId);
     const signature=JSON.stringify([s.request_id,s.status,s.sites,s.attempts,state.resultPage,s.details_retained]);if(signature===state.resultSignature)return;state.resultSignature=signature;
@@ -193,20 +203,12 @@
     pager("batch-result-pager",s.sites.length,state.resultPage,page=>{state.resultPage=page;state.resultSignature=null;renderResults();});
   }
   function render(){renderControls();renderResults();}
-  async function execute(body){
-    if(locked())return;state.pending=true;state.owned=body.request_id;state.preview=null;message("batch-error","");renderControls();const epoch=state.epoch;
-    try{const snapshot=await request("start",body);if(epoch!==state.epoch)return;if(!valid(snapshot)||!snapshot||snapshot.request_id!==body.request_id){const e=new Error("启动响应无法核对。");e.uncertain=true;throw e;}state.snapshot=snapshot;state.known=true;state.resultPage=0;}
-    catch(e){if(epoch!==state.epoch)return;if(!e.rejected){state.uncertain=body.request_id;state.known=false;}else state.owned=null;message("batch-error",errorText(e));}
-    finally{state.pending=false;if(epoch===state.epoch){render();poll();}}
+  function draftConfig(){
+    const body=buildRequest(crypto.randomUUID());
+    delete body.request_id;delete body.confirmed_authorized;
+    return body;
   }
-  function start(event){event.preventDefault();if(locked())return;try{const body=buildRequest(crypto.randomUUID());message("batch-error","");if(body.mode==="public_http"){void execute(body);return;}
-      state.preview=body;$("batch-confirm-text").textContent=JSON.stringify({模式:modes[body.mode],组合:[...state.groups].map(id=>state.catalog.groups.find(g=>g.id===id)?.name),站点数:selectedSites().length,计划总次数:selectedSites().length*body.attempts_per_site,参数:body,绑定:selectedSites().map(s=>({站点:s.name,地址:s.address,授权ID:state.bindings.get(s.id)}))},null,2);$("batch-confirm-dialog").showModal();renderControls();
-    }catch(e){message("batch-error",errorText(e));}}
-  async function stop(){
-    if(!state.known||state.pending||!active()||state.owned!==state.snapshot.request_id)return;const id=state.owned,epoch=state.epoch;state.pending=true;renderControls();
-    try{const result=await request("stop",{request_id:id});if(epoch!==state.epoch)return;if(!valid(result)||!result||result.request_id!==id)throw new Error("停止响应无法核对。");state.snapshot=result;}
-    catch(e){state.known=false;message("batch-error",`${errorText(e)} 将继续只读核对停止结果。`);}finally{state.pending=false;if(epoch===state.epoch){render();poll();}}
-  }
+  function start(event){event.preventDefault();if(locked())return;void window.batchTasks?.saveDraft();}
   function persistentPermits(){const fields=["id","name","url","modes","allowed_ips","max_concurrency","max_rps","max_duration","authorization","expires_at","proxy_routes"];return (state.info?.authorized||[]).filter(p=>!p.id.startsWith("demo-")).map(p=>Object.fromEntries(fields.filter(k=>Object.hasOwn(p,k)).map(k=>[k,JSON.parse(JSON.stringify(p[k]))])));}
   function renderPermits(){const root=$("permit-existing");root.replaceChildren();for(const p of state.info?.authorized||[])root.append(el("li",`${p.name} · ${p.id}${p.expired?" · 已过期":""}\n${p.url} · ${p.modes.join(" / ")}\nIP: ${p.allowed_ips.join(", ")}\n并发 ${p.max_concurrency} / ${p.max_rps} 次/秒 / ${p.max_duration} 秒 · 到期 ${p.expires_at}`));if(!root.children.length)root.append(el("li","暂无授权端点。"));}
   function permitControls(){const disabled=state.permitBusy||state.permitUnknown||state.nativeWrites>0;for(const id of ["permit-prepare","permit-confirm","permit-discard"])$(id).disabled=disabled;$("permit-close").disabled=state.permitBusy||state.nativeWrites>0;$("permit-reload").disabled=state.permitBusy||state.nativeWrites>0;}
@@ -235,14 +237,24 @@
     if(state.permitBusy||state.nativeWrites)return;state.permitBusy=true;state.permitDraft=null;renderControls();permitControls();
     try{await request("workspace",{operation:"authorization.reload",payload:{}});await info();if(state.info.authorization_error)throw new Error(state.info.authorization_error);state.permitUnknown=false;$("permit-preview").hidden=true;message("permit-error","");renderPermits();renderTargets();}catch(e){message("permit-error",errorText(e));}finally{state.permitBusy=false;renderControls();permitControls();}
   }
-  window.siteCatalog.subscribe(snapshot=>{state.catalog=snapshot?.version===2&&Array.isArray(snapshot.applications)?snapshot:null;if(state.catalog){state.groups=new Set([...state.groups].filter(id=>snapshot.groups.some(g=>g.id===id)));state.bindings=new Map([...state.bindings].filter(([id])=>snapshot.sites.some(s=>s.id===id)));state.excludedApplications=new Set([...state.excludedApplications].filter(key=>snapshot.groups.some(g=>g.application_ids.some(id=>`${g.id}/${id}`===key))));}state.preview=null;renderGroups();renderControls();renderTargets();});
+  function loadDraft(config=null){
+    state.groups=new Set(config?.group_ids||[]);state.excludedApplications.clear();state.excludedSites.clear();state.bindings=new Map((config?.permit_bindings||[]).map(b=>[b.site_id,b.permit_id]));
+    for(const input of document.querySelectorAll('input[name="batch-mode"]'))input.checked=input.value===(config?.mode||"public_http");
+    const fields={concurrency:["batch-concurrency",2],connection_limit:["batch-connections",2],queue_capacity:["batch-queue",32],attempts_per_site:["batch-attempts",1],start_rate:["batch-rate",2],request_timeout_secs:["batch-timeout",5],batch_timeout_secs:["batch-duration",120],per_site_connections:["batch-per-site",1],tcp_hold_secs:["batch-hold",5]};
+    for(const [key,[id,fallback]] of Object.entries(fields))$(id).value=String(config?.[key]??fallback);
+    if(config&&state.catalog){const included=new Set(config.site_ids||[]);for(const group of state.catalog.groups.filter(g=>state.groups.has(g.id)))for(const app of groupApplications(group)){const selected=Array.isArray(config.resource_selections)?config.resource_selections.some(s=>s.group_id===group.id&&s.resource_id===app.id):app.site_ids.some(id=>included.has(id));if(!selected)state.excludedApplications.add(`${group.id}/${app.id}`);}for(const site of candidateSites())if(!included.has(site.id))state.excludedSites.add(site.id);}
+    state.targetPage=0;renderGroups();renderTargets();renderControls();message("batch-error","");
+  }
+  window.batchEditor={state,buildRequest,draftConfig,selectedSites,loadDraft,validSnapshot:valid,readState,connect,request,locked,
+    setPending(value){state.pending=value;renderControls();},setPreview(value){state.preview=value;renderControls();},
+    display(snapshot,executionId=null){state.displaySnapshot=snapshot;state.owned=executionId;state.resultSignature=null;state.resultPage=0;renderResults();}
+  };
+  window.siteCatalog.subscribe(snapshot=>{state.catalog=snapshot?.version===3&&Array.isArray(snapshot.applications)?snapshot:null;if(state.catalog){state.groups=new Set([...state.groups].filter(id=>snapshot.groups.some(g=>g.id===id)));state.bindings=new Map([...state.bindings].filter(([id])=>snapshot.sites.some(s=>s.id===id)));state.excludedApplications=new Set([...state.excludedApplications].filter(key=>snapshot.groups.some(g=>g.application_ids.some(id=>`${g.id}/${id}`===key))));}state.preview=null;renderGroups();renderControls();renderTargets();});
   window.appShell.subscribe(source=>{if(source!=="batch")renderControls();});
   window.addEventListener("aonet-proxy",render);
-  $("batch-form").addEventListener("submit",start);$("batch-stop").addEventListener("click",()=>void stop());$("batch-reconnect").addEventListener("click",()=>void connect());$("batch-refresh-catalog").addEventListener("click",()=>void window.siteCatalog.reload());
-  for(const input of document.querySelectorAll('input[name="batch-mode"]'))input.addEventListener("change",()=>{state.preview=null;state.bindings.clear();message("batch-error","");renderGroups();render();renderTargets();});
+  $("batch-form").addEventListener("submit",start);$("batch-refresh-catalog").addEventListener("click",()=>void window.siteCatalog.reload());
+  for(const input of document.querySelectorAll('input[name="batch-mode"]'))input.addEventListener("change",()=>{state.preview=null;state.bindings.clear();state.excludedSites.clear();message("batch-error","");renderGroups();render();renderTargets();});
   for(const id of ["batch-concurrency","batch-connections","batch-queue","batch-attempts","batch-rate","batch-timeout","batch-duration","batch-per-site","batch-hold"])$(id).addEventListener("input",()=>{state.preview=null;renderControls();});
-  $("batch-confirm-cancel").addEventListener("click",()=>{state.preview=null;$("batch-confirm-dialog").close();renderControls();});$("batch-confirm-start").addEventListener("click",()=>{if(!state.preview||locked())return;const body={...state.preview,confirmed_authorized:true};$("batch-confirm-dialog").close();void execute(body);});
-  $("batch-confirm-dialog").addEventListener("cancel",()=>{state.preview=null;renderControls();});
   $("batch-authorizations").addEventListener("click",()=>{if(locked())return;renderPermits();permitControls();$("permit-dialog").showModal();});
   $("permit-form").addEventListener("submit",event=>void preparePermit(event));$("permit-confirm").addEventListener("click",()=>void confirmPermit());$("permit-reload").addEventListener("click",()=>void reloadPermits());
   $("permit-discard").addEventListener("click",()=>{state.permitDraft=null;$("permit-preview").hidden=true;});$("permit-close").addEventListener("click",()=>{if(state.permitBusy||state.nativeWrites)return;state.permitDraft=null;$("permit-preview").hidden=true;$("permit-dialog").close();});$("permit-dialog").addEventListener("cancel",event=>{if(state.permitBusy||state.nativeWrites)event.preventDefault();else state.permitDraft=null;});

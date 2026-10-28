@@ -1,4 +1,7 @@
-//! Strict v2 application catalog. Reference rules are never expanded or probed.
+//! Strict v3 resource catalog. Reference rules are never expanded or probed.
+mod v3;
+#[cfg(test)]
+mod v3_tests;
 use crate::{
     model::{ConnectionEndpointKind, ConnectionPreset, SiteList},
     storage,
@@ -10,8 +13,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Mutex,
 };
+use v3::V3Catalog;
+pub use v3::{ApplicationKind, CatalogTag, GroupInput, ResourceSupplement, Tag, TagAssignment};
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MAX_BYTES: usize = 1_048_576;
 const MAX_SITES: usize = 1000;
 const MAX_APPLICATIONS: usize = 1000;
@@ -89,6 +94,7 @@ pub struct ReferenceRule {
 pub struct Application {
     pub id: String,
     pub name: String,
+    pub kind: ApplicationKind,
     pub category: ApplicationCategory,
     pub provider: String,
     pub product: String,
@@ -103,6 +109,7 @@ pub struct Group {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub tag_ids: Vec<String>,
     pub application_ids: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -112,7 +119,10 @@ pub struct SaveRequest {
     pub expected_revision: u64,
     pub sites: Vec<Site>,
     pub applications: Vec<Application>,
-    pub groups: Vec<Group>,
+    pub groups: Vec<GroupInput>,
+    pub tags: Vec<Tag>,
+    pub tag_assignments: Vec<TagAssignment>,
+    pub resource_supplements: Vec<ResourceSupplement>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct CatalogSite {
@@ -128,6 +138,8 @@ pub struct CatalogSite {
 pub struct CatalogApplication {
     #[serde(flatten)]
     pub application: Application,
+    pub tag_ids: Vec<String>,
+    pub supplement: Option<ResourceSupplement>,
     pub builtin: bool,
     pub sources: Vec<crate::model::ConnectionSource>,
     pub missing: Vec<String>,
@@ -150,6 +162,9 @@ pub struct Snapshot {
     pub sites: Vec<CatalogSite>,
     pub applications: Vec<CatalogApplication>,
     pub groups: Vec<CatalogGroup>,
+    pub tags: Vec<CatalogTag>,
+    pub tag_assignments: Vec<TagAssignment>,
+    pub resource_supplements: Vec<ResourceSupplement>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -161,7 +176,7 @@ struct SavedCatalog {
     groups: Vec<Group>,
 }
 struct State {
-    saved: SavedCatalog,
+    saved: V3Catalog,
     source: Option<Vec<u8>>,
 }
 pub struct Manager {
@@ -190,7 +205,8 @@ impl Manager {
         connections: &[ConnectionPreset],
         placeholders: bool,
     ) -> Result<Self, String> {
-        let (mut builtin_sites, mut builtin_applications, builtin_groups) = list_builtins(lists)?;
+        let (mut builtin_sites, mut builtin_applications, mut builtin_groups) =
+            list_builtins(lists)?;
         let (ref_sites, mut ref_apps) = reference_builtins(connections)?;
         if placeholders {
             ref_apps.extend(communication_placeholders());
@@ -226,21 +242,29 @@ impl Manager {
         }
         let path = data_dir.join(FILE_NAME);
         let source = read_source(&path)?;
-        let saved = match &source {
-            Some(bytes) => decode_saved(bytes, &builtin_sites)?,
-            None => migrate(lists)?,
+        let builtin_tags = v3::prepare_builtins(&mut builtin_applications, &mut builtin_groups);
+        let saved = if source.as_ref().is_some_and(|bytes| {
+            serde_json::from_slice::<VersionHeader>(bytes).is_ok_and(|h| h.version == VERSION)
+        }) {
+            serde_json::from_slice::<V3Catalog>(source.as_ref().unwrap())
+                .map_err(|e| format!("v3 应用目录损坏，未覆盖原文件：{e}"))?
+        } else {
+            let old = match &source {
+                Some(bytes) => decode_saved(bytes, &builtin_sites)?,
+                None => migrate(lists)?,
+            };
+            validate(&old, &builtin_sites, &builtin_applications, &builtin_groups)
+                .map_err(|e| format!("旧应用目录无法加载，未写入任何文件：{e}"))?;
+            v3::migrate(old, &builtin_sites, &builtin_applications, &builtin_tags)?
         };
-        if saved.version != VERSION {
-            return Err("不支持的应用目录版本；未覆盖原文件".into());
-        }
-        validate(
+        v3::validate(
             &saved,
             &builtin_sites,
             &builtin_applications,
             &builtin_groups,
+            &builtin_tags,
         )
         .map_err(|e| format!("应用目录无法加载，未写入任何文件：{e}"))?;
-        serialize(&saved)?;
         Ok(Self {
             path,
             builtin_sites,
@@ -259,7 +283,7 @@ impl Manager {
             .lock()
             .map_err(|_| "应用目录锁异常，请重启应用")?;
         if request.schema_version != VERSION {
-            return Err("只接受 schema_version=2；旧版保存请求被拒绝".into());
+            return Err("只接受 schema_version=3；旧版保存请求被拒绝".into());
         }
         if request.expected_revision != state.saved.revision {
             return Err("应用目录版本冲突：数据已更新，请重新读取后再保存".into());
@@ -269,18 +293,23 @@ impl Manager {
             .revision
             .checked_add(1)
             .ok_or("应用目录修订号已耗尽")?;
-        let saved = SavedCatalog {
+        let mut saved = V3Catalog {
             version: VERSION,
             revision,
             sites: request.sites,
             applications: request.applications,
             groups: request.groups,
+            tags: request.tags,
+            tag_assignments: request.tag_assignments,
+            resource_supplements: request.resource_supplements,
         };
-        validate(
+        v3::normalize_tags(&mut saved)?;
+        v3::validate(
             &saved,
             &self.builtin_sites,
             &self.builtin_applications,
             &self.builtin_groups,
+            &v3::builtin_tags(&self.builtin_groups),
         )?;
         let bytes = serialize(&saved)?;
         if read_source(&self.path)? != state.source {
@@ -294,7 +323,7 @@ impl Manager {
         state.source = Some(bytes);
         Ok(self.make_snapshot(&state.saved))
     }
-    fn make_snapshot(&self, saved: &SavedCatalog) -> Snapshot {
+    fn make_snapshot(&self, saved: &V3Catalog) -> Snapshot {
         let sites = self
             .builtin_sites
             .iter()
@@ -311,42 +340,12 @@ impl Manager {
                 }
             }))
             .collect();
-        Snapshot {
-            version: VERSION,
-            revision: saved.revision,
+        v3::snapshot(
+            saved,
             sites,
-            applications: self
-                .builtin_applications
-                .iter()
-                .cloned()
-                .chain(
-                    saved
-                        .applications
-                        .iter()
-                        .cloned()
-                        .map(|application| CatalogApplication {
-                            application,
-                            builtin: false,
-                            sources: vec![],
-                            missing: vec![],
-                            limitations: vec![],
-                            summary: String::new(),
-                            status: "custom".into(),
-                            environment: None,
-                            version: None,
-                        }),
-                )
-                .collect(),
-            groups: self
-                .builtin_groups
-                .iter()
-                .cloned()
-                .chain(saved.groups.iter().cloned().map(|group| CatalogGroup {
-                    group,
-                    builtin: false,
-                }))
-                .collect(),
-        }
+            &self.builtin_applications,
+            &self.builtin_groups,
+        )
     }
 }
 // A dedicated strict legacy DTO prevents v2 fields/provenance from being accepted as v1.
@@ -382,9 +381,7 @@ fn decode_saved(bytes: &[u8], builtin_sites: &[CatalogSite]) -> Result<SavedCata
     let header: VersionHeader =
         serde_json::from_slice(bytes).map_err(|e| format!("应用目录损坏，未覆盖原文件：{e}"))?;
     match header.version {
-        2 => {
-            serde_json::from_slice(bytes).map_err(|e| format!("v2 应用目录损坏，未覆盖原文件：{e}"))
-        }
+        2 => v3::decode_v2(bytes),
         1 => {
             let old: V1Catalog = serde_json::from_slice(bytes)
                 .map_err(|e| format!("v1 应用目录损坏，未覆盖原文件：{e}"))?;
@@ -430,6 +427,7 @@ fn decode_saved(bytes: &[u8], builtin_sites: &[CatalogSite]) -> Result<SavedCata
                     );
                 }
                 groups.push(Group {
+                    tag_ids: vec![],
                     id: g.id,
                     name: g.name,
                     description: g.description,
@@ -449,6 +447,7 @@ fn decode_saved(bytes: &[u8], builtin_sites: &[CatalogSite]) -> Result<SavedCata
 }
 fn single_site_application(id: String, site: &Site, category: ApplicationCategory) -> Application {
     Application {
+        kind: ApplicationKind::Application,
         id,
         name: site.name.clone(),
         category,
@@ -494,7 +493,10 @@ fn communication_placeholders() -> Vec<CatalogApplication> {
         })
         .collect();
         CatalogApplication {
+            tag_ids: vec![],
+            supplement: None,
             application: Application {
+                kind: ApplicationKind::Application,
                 id: stable_id("builtin-app", &["communication", key]),
                 name: name.into(),
                 category: ApplicationCategory::Communication,
@@ -539,7 +541,7 @@ fn read_source(path: &Path) -> Result<Option<Vec<u8>>, String> {
         Err(e) => Err(format!("无法检查应用目录文件：{e}")),
     }
 }
-fn serialize(saved: &SavedCatalog) -> Result<Vec<u8>, String> {
+fn serialize(saved: &V3Catalog) -> Result<Vec<u8>, String> {
     let bytes = serde_json::to_vec_pretty(saved).map_err(|e| format!("应用目录序列化失败：{e}"))?;
     if bytes.len() > MAX_BYTES {
         return Err("应用目录最终 JSON 不能超过 1 MiB".into());
@@ -633,7 +635,10 @@ fn validate(
         if a.site_ids.len() > MAX_ITEMS || a.reference_rules.len() > MAX_ITEMS {
             return Err("每个应用最多引用 100 个端点、包含 100 条规则".into());
         }
-        refs += a.site_ids.len() + a.reference_rules.len();
+        refs = refs
+            .checked_add(a.site_ids.len())
+            .and_then(|n| n.checked_add(a.reference_rules.len()))
+            .ok_or("引用总数溢出")?;
         if refs > MAX_REFS {
             return Err("应用和分组引用总数不能超过 10000".into());
         }
@@ -662,7 +667,9 @@ fn validate(
         custom_id(&g.id, &mut ids, "分组")?;
         text(&g.name, 200, true, "分组名称")?;
         text(&g.description, 1000, false, "分组说明")?;
-        refs += g.application_ids.len();
+        refs = refs
+            .checked_add(g.application_ids.len())
+            .ok_or("引用总数溢出")?;
         if refs > MAX_REFS {
             return Err("应用和分组引用总数不能超过 10000".into());
         }
@@ -832,7 +839,10 @@ fn list_builtins(lists: &[SiteList]) -> Result<BuiltinCatalog, String> {
                 .any(|a: &CatalogApplication| a.application.id == app_id)
             {
                 apps.push(CatalogApplication {
+                    tag_ids: vec![],
+                    supplement: None,
                     application: Application {
+                        kind: ApplicationKind::Website,
                         id: app_id.clone(),
                         name: t.name.clone(),
                         category: ApplicationCategory::Web,
@@ -859,6 +869,7 @@ fn list_builtins(lists: &[SiteList]) -> Result<BuiltinCatalog, String> {
         }
         groups.push(CatalogGroup {
             group: Group {
+                tag_ids: vec![],
                 id: stable_id("builtin-group", &[&list.id]),
                 name: list.name.clone(),
                 description: list.description.clone(),
@@ -905,7 +916,7 @@ fn site_from_old(id: &str, name: &str, address: &str, purpose: &str) -> Result<S
 }
 fn migrate(lists: &[SiteList]) -> Result<SavedCatalog, String> {
     let mut saved = SavedCatalog {
-        version: VERSION,
+        version: 2,
         revision: 0,
         sites: vec![],
         applications: vec![],
@@ -929,6 +940,7 @@ fn migrate(lists: &[SiteList]) -> Result<SavedCatalog, String> {
                 let site = site_from_old(&site_id, &t.name, &addr, &t.region)?;
                 saved.sites.push(site);
                 saved.applications.push(Application {
+                    kind: ApplicationKind::Application,
                     id: app_id.clone(),
                     name: t.name.clone(),
                     category: ApplicationCategory::Web,
@@ -947,6 +959,7 @@ fn migrate(lists: &[SiteList]) -> Result<SavedCatalog, String> {
             }
         }
         saved.groups.push(Group {
+            tag_ids: vec![],
             id: stable_id("legacy-group", &[&list.id]),
             name: list.name.clone(),
             description: list.description.clone(),
@@ -1064,7 +1077,10 @@ fn reference_builtins(
             ApplicationCategory::Custom
         };
         apps.push(CatalogApplication {
+            tag_ids: vec![],
+            supplement: None,
             application: Application {
+                kind: ApplicationKind::Application,
                 id: app_id,
                 name: p.product.clone(),
                 category,
@@ -1240,6 +1256,55 @@ fn normalize_host(value: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
+fn test_request(
+    revision: u64,
+    sites: Vec<Site>,
+    applications: Vec<Application>,
+    groups: Vec<Group>,
+) -> SaveRequest {
+    let mut tags = vec![];
+    let mut tag_assignments: Vec<TagAssignment> = vec![];
+    let groups = groups
+        .into_iter()
+        .map(|g| {
+            let id = stable_id("test-tag", &[&g.id]);
+            tags.push(Tag {
+                id: id.clone(),
+                name: g.id.clone(),
+            });
+            for resource_id in g.application_ids {
+                if let Some(a) = tag_assignments
+                    .iter_mut()
+                    .find(|a| a.resource_id == resource_id)
+                {
+                    a.tag_ids.push(id.clone());
+                } else {
+                    tag_assignments.push(TagAssignment {
+                        resource_id,
+                        tag_ids: vec![id.clone()],
+                    });
+                }
+            }
+            GroupInput {
+                id: g.id,
+                name: g.name,
+                description: g.description,
+                tag_ids: vec![id],
+            }
+        })
+        .collect();
+    SaveRequest {
+        schema_version: VERSION,
+        expected_revision: revision,
+        sites,
+        applications,
+        groups,
+        tags,
+        tag_assignments,
+        resource_supplements: vec![],
+    }
+}
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::Target;
@@ -1269,13 +1334,7 @@ mod tests {
         applications: Vec<Application>,
         groups: Vec<Group>,
     ) -> SaveRequest {
-        SaveRequest {
-            schema_version: 2,
-            expected_revision: revision,
-            sites,
-            applications,
-            groups,
-        }
+        test_request(revision, sites, applications, groups)
     }
     #[test]
     fn builtins_keep_55_endpoints_and_seven_groups() {
@@ -1321,6 +1380,7 @@ mod tests {
             alpn: None,
         };
         let app = Application {
+            kind: ApplicationKind::Application,
             id: "a".into(),
             name: "app".into(),
             category: ApplicationCategory::Custom,
@@ -1340,7 +1400,7 @@ mod tests {
         );
         let disk: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.path().join(FILE_NAME)).unwrap()).unwrap();
-        assert_eq!(disk["version"], 2);
+        assert_eq!(disk["version"], 3);
     }
     #[test]
     fn rejects_v1_save_payload_and_computed_fields() {
@@ -1391,6 +1451,7 @@ mod legacy_protection_tests {
     }
     fn group(id: &str, refs: &[&str]) -> Group {
         Group {
+            tag_ids: vec![],
             id: id.into(),
             name: "组合".into(),
             description: String::new(),
@@ -1410,22 +1471,17 @@ mod legacy_protection_tests {
         }
     }
     fn request(revision: u64, sites: Vec<Site>, groups: Vec<Group>) -> SaveRequest {
-        SaveRequest {
-            schema_version: 2,
-            expected_revision: revision,
-            applications: sites
-                .iter()
-                .map(|s| {
-                    single_site_application(
-                        stable_id("test-app", &[&s.id]),
-                        s,
-                        ApplicationCategory::Custom,
-                    )
-                })
-                .collect(),
-            sites,
-            groups,
-        }
+        let applications = sites
+            .iter()
+            .map(|s| {
+                single_site_application(
+                    stable_id("test-app", &[&s.id]),
+                    s,
+                    ApplicationCategory::Custom,
+                )
+            })
+            .collect();
+        test_request(revision, sites, applications, groups)
     }
     fn list(id: &str, builtin: bool, targets: &[(&str, &str, &str)]) -> SiteList {
         SiteList {
@@ -1619,10 +1675,19 @@ mod legacy_protection_tests {
         );
         assert_eq!(snap.groups[2].group.application_ids.len(), 1);
         assert_eq!(snap.groups[3].group.application_ids.len(), 2);
-        assert_ne!(
-            snap.groups[2].group.application_ids[0],
-            snap.groups[3].group.application_ids[0]
-        );
+        // OR projection follows resource order, not the old group's order. The second
+        // group contains both differently named resources, including the shared one.
+        let a: HashSet<_> = snap.groups[2].group.application_ids.iter().collect();
+        let b: HashSet<_> = snap.groups[3].group.application_ids.iter().collect();
+        assert!(a.is_subset(&b));
+        assert_eq!(b.difference(&a).count(), 1);
+        let names: HashSet<_> = snap
+            .applications
+            .iter()
+            .filter(|app| b.contains(&app.application.id))
+            .map(|app| app.application.name.as_str())
+            .collect();
+        assert_eq!(names, HashSet::from(["甲", "乙"]));
         assert!(
             snap.sites
                 .iter()
@@ -1752,16 +1817,24 @@ mod legacy_protection_tests {
             .map(|i| site(&format!("s{i}"), "example.com"))
             .collect();
         let refs: Vec<_> = sites.iter().map(|s| s.id.as_str()).collect();
-        assert!(
-            manager
-                .save(request(
-                    0,
-                    sites.clone(),
-                    (0..11).map(|i| group(&format!("g{i}"), &refs)).collect()
-                ))
-                .unwrap_err()
-                .contains("10000")
-        );
+        // Preserve the legacy 10,000-reference bound independently of v3's larger budget.
+        let old = SavedCatalog {
+            version: 2,
+            revision: 0,
+            sites: sites.clone(),
+            applications: sites
+                .iter()
+                .map(|s| {
+                    single_site_application(
+                        stable_id("test-app", &[&s.id]),
+                        s,
+                        ApplicationCategory::Custom,
+                    )
+                })
+                .collect(),
+            groups: (0..11).map(|i| group(&format!("g{i}"), &refs)).collect(),
+        };
+        assert!(validate(&old, &[], &[], &[]).unwrap_err().contains("10000"));
         manager.save(request(0, vec![], vec![])).unwrap();
         let original = std::fs::read(dir.path().join(FILE_NAME)).unwrap();
         let huge = (0..1000)
@@ -1868,7 +1941,7 @@ mod v2_migration_tests {
         let m = Manager::new(dir.path(), &lists).unwrap();
         let snap = m.snapshot();
         assert_eq!(snap.revision, 7);
-        assert_eq!(snap.version, 2);
+        assert_eq!(snap.version, 3);
         let host = snap.sites.iter().find(|s| s.site.id == "old-host").unwrap();
         assert_eq!(host.site.port, Some(443));
         assert_eq!(host.site.protocol, Protocol::Unspecified);
@@ -1885,7 +1958,7 @@ mod v2_migration_tests {
             serde_json::to_value(Manager::new(dir.path(), &lists).unwrap().snapshot()).unwrap()
         );
         m.save(SaveRequest {
-            schema_version: 2,
+            schema_version: 3,
             expected_revision: 7,
             sites: snap
                 .sites
@@ -1903,8 +1976,21 @@ mod v2_migration_tests {
                 .groups
                 .into_iter()
                 .filter(|g| !g.builtin)
-                .map(|g| g.group)
+                .map(|g| GroupInput {
+                    id: g.group.id,
+                    name: g.group.name,
+                    description: g.group.description,
+                    tag_ids: g.group.tag_ids,
+                })
                 .collect(),
+            tags: snap
+                .tags
+                .into_iter()
+                .filter(|t| !t.builtin)
+                .map(|t| t.tag)
+                .collect(),
+            tag_assignments: snap.tag_assignments,
+            resource_supplements: snap.resource_supplements,
         })
         .unwrap();
         assert_eq!(

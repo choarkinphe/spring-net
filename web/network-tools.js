@@ -48,7 +48,7 @@
     if(tool==="udp_dns"){
       const name=$("dns-query-name").value.trim().replace(/\.$/,"");
       if(!validQuery(name))throw new Error("请填写合法的 DNS 查询域名。");
-      const record_type=$("dns-query-type").value;
+      const record_type=document.querySelector('input[name="dns-query-type"]:checked')?.value;
       if(!["A","AAAA"].includes(record_type))throw new Error("请选择 A 或 AAAA 查询类型。");
       body.udp_dns={query_name:name.toLowerCase(),record_type};
     }
@@ -123,7 +123,7 @@
     $("target").value=tool==="http"?(isUrl?site.address:""):(url?url.hostname.replace(/^\[|\]$/g,""):site.address);
     $("port").value=site.port??(url?(url.port||(url.protocol==="https:"?443:80)):"");
     $("quic-alpn").value=tool==="quic"?(site.alpn||""):"";
-    if(tool==="udp_dns"){$("dns-query-name").value="";$("dns-query-type").value="A";}
+    if(tool==="udp_dns"){$("dns-query-name").value="";document.querySelectorAll('input[name="dns-query-type"]').forEach(n=>n.checked=n.value==="A");}
     $("draft-note").textContent=tool==="http"&&!isUrl?`${site.name} 未保存完整网址，请手动填写 http:// 或 https:// 地址。`:`已填入「${site.name}」。${portTools.includes(tool)?($("port").value?"端口来自站点配置或网址。":"该站点未设置默认端口。 "):""}请手动点击开始。`;
     showError("");render();return true;
   }
