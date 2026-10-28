@@ -116,7 +116,7 @@
       <p id="editor-error" class="error" role="alert" hidden></p><div class="form-actions"><button id="editor-cancel" type="button">取消</button><button id="editor-save" class="primary" type="submit">保存</button></div>
     </form></dialog>
     <dialog id="delete-dialog" aria-labelledby="delete-title"><h2 id="delete-title">确认删除</h2><p id="delete-impact"></p><div class="form-actions"><button id="delete-cancel" type="button">取消</button><button id="delete-confirm" class="danger" type="button">删除</button></div></dialog>
-    <footer class="proxy-footer" id="proxy-footer" aria-label="代理端点状态"><div class="proxy-footer-inner"><div class="proxy-footer-main"><strong id="proxy-health-state" class="proxy-health-state" data-state="unknown">正在读取代理状态…</strong><span id="proxy-health-route"></span></div><p id="proxy-health-detail">健康检查仅连接代理端点，不访问目标站点或验证目标转发。</p><span class="proxy-footer-caution">超时不一定表示网站故障；路由节点不回复也不等于故障。</span><span id="proxy-health-announcement" role="status" aria-live="polite" class="sr-only"></span></div></footer>
+    <footer class="proxy-footer" id="proxy-footer" aria-label="代理端点状态"><div class="proxy-footer-inner"><div class="proxy-footer-main"><strong id="proxy-health-state" class="proxy-health-state" data-state="unknown">正在读取代理状态…</strong><span id="proxy-health-route"></span><span id="proxy-health-latency"></span></div><p id="proxy-health-detail" class="sr-only">健康检查仅连接代理端点，不访问目标站点或验证目标转发。</p><span class="proxy-footer-caution sr-only">超时不一定表示网站故障；路由节点不回复也不等于故障。</span><span id="proxy-health-announcement" role="status" aria-live="polite" class="sr-only"></span></div></footer>
   </main>
 </body>
 </html>
