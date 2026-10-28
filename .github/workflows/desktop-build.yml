@@ -1,36 +1,66 @@
-name: Desktop build (manual, no release)
+name: spring-net checks and desktop packages
+
 on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  verify:
+    name: Linux checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install locked local CLI
-        run: npm ci
-      - name: Core tests
-        run: cargo test --locked
-      - name: Frontend tests
-        run: node --test web/*.test.cjs
-      - name: Build Mac app
-        if: runner.os == 'macOS'
-        run: bash scripts/build-macos.sh
-      - name: Build Windows installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/build-windows.ps1
+      - name: Version and frontend tests
+        run: node scripts/ci-desktop.cjs verify-linux
+
+  package:
+    name: Package ${{ matrix.mode }}
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            mode: windows-x64
+          - os: macos-15
+            mode: macos-arm64
+          - os: macos-15-intel
+            mode: macos-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install native stable Rust
+        shell: bash
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Test and package native application
+        run: node scripts/ci-desktop.cjs ${{ matrix.mode }}
       - uses: actions/upload-artifact@v4
         with:
-          name: AoNet-${{ runner.os }}
-          path: dist/*
+          name: spring-net-${{ matrix.mode }}-${{ github.sha }}
+          path: ci-artifacts/
           if-no-files-found: error
+          retention-days: 30

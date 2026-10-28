@@ -82,10 +82,10 @@ pub fn run() {
             {
                 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
                 // A custom item routes Cmd+Q through ExitRequested, unlike native terminate:.
-                let quit = MenuItemBuilder::with_id("quit-aonet", "退出 AoNet")
+                let quit = MenuItemBuilder::with_id("quit-aonet", "退出 spring-net")
                     .accelerator("CmdOrCtrl+Q")
                     .build(app)?;
-                let application = SubmenuBuilder::new(app, "AoNet")
+                let application = SubmenuBuilder::new(app, "spring-net")
                     .about(None)
                     .separator()
                     .hide()
@@ -123,7 +123,7 @@ pub fn run() {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("AoNet · 网络测试工作台")
+            .title("spring-net · 网络测试工作台")
             .inner_size(1280.0, 840.0)
             .min_inner_size(900.0, 620.0)
             .on_navigation(|url| {
@@ -191,7 +191,7 @@ pub fn run() {
             commands::export_dialog
         ])
         .build(tauri::generate_context!())
-        .expect("无法创建 AoNet 桌面窗口")
+        .expect("无法创建 spring-net 桌面窗口")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 let state = app.state::<DesktopState>();

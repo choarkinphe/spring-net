@@ -19,6 +19,14 @@ function validateEnvironment(mode, platform, arch, nodeVersion, tag, version) {
   if (tag && tag !== `v${version}`) throw new Error(`Tag ${tag} does not match package version v${version}.`);
   return target;
 }
+function releaseTag(env) {
+  const github = env.GITHUB_REF_TYPE === "tag" ? env.GITHUB_REF_NAME : undefined;
+  if (env.CI_COMMIT_TAG && github && env.CI_COMMIT_TAG !== github) throw new Error("Conflicting GitLab/GitHub release tags.");
+  return env.CI_COMMIT_TAG || github;
+}
+function artifactName(mode, version) {
+  return `spring-net-${version}-${mode}${mode === "windows-x64" ? "-setup.exe" : ".zip"}`;
+}
 function run(command, args, capture = false) {
   const result = spawnSync(command, args, {cwd:root, env:process.env, encoding:"utf8", stdio:capture?"pipe":"inherit"});
   if (result.error) throw result.error;
@@ -30,7 +38,7 @@ function testFiles() {
 }
 function main(mode) {
   const version = JSON.parse(fs.readFileSync(path.join(root,"package.json"),"utf8")).version;
-  const target = validateEnvironment(mode, process.platform, process.arch, process.versions.node, process.env.CI_COMMIT_TAG, version);
+  const target = validateEnvironment(mode, process.platform, process.arch, process.versions.node, releaseTag(process.env), version);
   console.log(`CI target ${mode}; Node ${process.version}; runner executable ${process.env.CI_RUNNER_EXECUTABLE_ARCH || "local"}`);
   run(process.execPath,["scripts/version.cjs","--check"]);
   if (mode === "verify-linux") {
@@ -50,12 +58,11 @@ function main(mode) {
   run(process.execPath,["--test",...testFiles()]);
   if (process.platform === "win32") run("pwsh",["-NoLogo","-NoProfile","-NonInteractive","-File","scripts/build-windows.ps1"]);
   else run("bash",["scripts/build-macos.sh"]);
-  const files = fs.readdirSync(path.join(root,"dist")).filter(name=> mode === "windows-x64" ? name.endsWith("-setup.exe") : name === `AoNet-macOS-${process.arch === "arm64" ? "arm64" : "x86_64"}.zip`);
+  const files = fs.readdirSync(path.join(root,"dist")).filter(name=> mode === "windows-x64" ? name.endsWith("-setup.exe") : name === `spring-net-macOS-${process.arch === "arm64" ? "arm64" : "x86_64"}.zip`);
   if (files.length !== 1) throw new Error(`Expected exactly one fresh installer/archive, got ${files.length}.`);
   const input = path.join(root,"dist",files[0]);
   if (!fs.statSync(input).isFile() || !fs.statSync(input).size) throw new Error("Empty or invalid package output.");
-  const suffix = mode === "windows-x64" ? "-setup.exe" : ".zip";
-  const name = `AoNet-${version}-${mode}${suffix}`;
+  const name = artifactName(mode, version);
   fs.mkdirSync(path.join(root,"ci-artifacts"));
   const output = path.join(root,"ci-artifacts",name);
   fs.copyFileSync(input,output);
@@ -66,4 +73,4 @@ function main(mode) {
 if (require.main === module) {
   try { main(process.argv[2]); } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
-module.exports = {validateEnvironment, testFiles};
+module.exports = {validateEnvironment, testFiles, releaseTag, artifactName};

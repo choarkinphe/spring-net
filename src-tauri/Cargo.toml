@@ -1,9 +1,16 @@
 [package]
-name = "aonet-desktop"
+name = "spring-net-desktop"
 version = "0.9.0"
 edition = "2024"
-description = "AoNet cross-platform desktop application"
+description = "spring-net cross-platform desktop application"
 license = "MIT"
+
+[lib]
+name = "aonet_desktop"
+
+[[bin]]
+name = "spring-net"
+path = "src/main.rs"
 
 [features]
 default = []
@@ -17,7 +24,7 @@ debug = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-aonet = { path = ".." }
+aonet = { package = "spring-net", path = ".." }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"

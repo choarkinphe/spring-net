@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AoNet",
+  "productName": "spring-net",
   "version": "0.9.0",
   "identifier": "local.aonet.desktop",
   "build": {"frontendDist": "../web"},

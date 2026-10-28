@@ -11,7 +11,7 @@ import time
 import urllib.request
 
 root = Path(__file__).resolve().parent.parent
-binary = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "target/debug/aonet"
+binary = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "target/debug/spring-net"
 with tempfile.TemporaryDirectory(prefix="aonet managed ") as temporary:
     data = Path(temporary)
     auth = data / "separate-auth.json"

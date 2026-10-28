@@ -9,6 +9,13 @@ const root = path.resolve(__dirname, "..");
 test("current release manifests and lockfiles agree", () => {
   assert.equal(versionPlan(root).changes.length, 0);
 });
+test("spring-net package names retain application data and Rust namespace compatibility",()=>{
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root,"package.json"),"utf8")).name,"spring-net-desktop");
+  const config=JSON.parse(fs.readFileSync(path.join(root,"src-tauri/tauri.conf.json"),"utf8"));
+  assert.equal(config.productName,"spring-net");assert.equal(config.identifier,"local.aonet.desktop");
+  assert.match(fs.readFileSync(path.join(root,"Cargo.toml"),"utf8"),/\[lib\]\nname = "aonet"/);
+  assert.match(fs.readFileSync(path.join(root,"src-tauri/Cargo.toml"),"utf8"),/package = "spring-net", path = "\.\."/);
+});
 test("version planning changes only application packages, validates first and is idempotent", () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aonet-version-"));
   const files = ["package.json", "package-lock.json", "Cargo.toml", "Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json"];

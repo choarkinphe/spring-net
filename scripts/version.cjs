@@ -20,13 +20,13 @@ function versionPlan(root, requested) {
     patch(name, /("version"\s*:\s*")[^"]+(\")/, (_match, prefix, suffix) => `${prefix}${version}${suffix}`);
   }
   const lock = JSON.parse(read("package-lock.json"));
-  if (lock.name !== "aonet-desktop" || lock.packages?.[""]?.name !== "aonet-desktop") throw new Error("package-lock.json 根包信息无效。");
-  patch("package-lock.json", /("name": "aonet-desktop",\s*"version": ")[^"]+(\")/, (_match, prefix, suffix) => `${prefix}${version}${suffix}`, 2);
+  if (lock.name !== "spring-net-desktop" || lock.packages?.[""]?.name !== "spring-net-desktop") throw new Error("package-lock.json 根包信息无效。");
+  patch("package-lock.json", /("name": "spring-net-desktop",\s*"version": ")[^"]+(\")/, (_match, prefix, suffix) => `${prefix}${version}${suffix}`, 2);
   for (const name of ["Cargo.toml", "src-tauri/Cargo.toml"]) {
-    patch(name, /(\[package\]\s*name = "aonet(?:-desktop)?"\s*version = ")[^"]+(\")/, (_match, prefix, suffix) => `${prefix}${version}${suffix}`);
+    patch(name, /(\[package\]\s*name = "spring-net(?:-desktop)?"\s*version = ")[^"]+(\")/, (_match, prefix, suffix) => `${prefix}${version}${suffix}`);
   }
   for (const [name, count] of [["Cargo.lock", 1], ["src-tauri/Cargo.lock", 2]]) {
-    patch(name, /(\[\[package\]\]\s*name = "aonet(?:-desktop)?"\s*version = ")[^"]+(\")/, (_match, prefix, suffix) => `${prefix}${version}${suffix}`, count);
+    patch(name, /(\[\[package\]\]\s*name = "spring-net(?:-desktop)?"\s*version = ")[^"]+(\")/, (_match, prefix, suffix) => `${prefix}${version}${suffix}`, count);
   }
   return {version, changes};
 }
@@ -40,7 +40,7 @@ if (require.main === module) {
     const {version, changes} = versionPlan(root, check ? undefined : args[0]);
     if (check && changes.length) throw new Error(`版本不一致（应为 ${version}）：${changes.map(x => x.name).join("、")}。请运行版本同步命令。`);
     for (const change of changes) fs.writeFileSync(path.join(root, change.name), change.content);
-    console.log(`AoNet v${version}：${check ? "版本一致" : `已同步 ${changes.length} 个文件`}`);
+    console.log(`spring-net v${version}：${check ? "版本一致" : `已同步 ${changes.length} 个文件`}`);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

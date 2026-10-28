@@ -8,7 +8,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Version consistency check failed.' }
     & npm.cmd run desktop:build:windows -- --ci -- --locked
     if ($LASTEXITCODE -ne 0) { throw 'Tauri Windows build failed.' }
-    $Installers = @(Get-ChildItem (Join-Path $Root 'src-tauri/target/release/bundle/nsis/*-setup.exe'))
+    $Installers = @(Get-ChildItem (Join-Path $Root 'src-tauri/target/release/bundle/nsis/spring-net_*-setup.exe'))
     if ($Installers.Count -eq 0) { throw 'No NSIS installer was generated.' }
     $Dist = Join-Path $Root 'dist'
     New-Item -ItemType Directory -Force $Dist | Out-Null

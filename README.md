@@ -1,4 +1,6 @@
-# AoNet
+# spring-net
+
+原名 AoNet。源码目标仓库：[choarkinphe/spring-net](https://github.com/choarkinphe/spring-net)。更名后保留 `local.aonet.desktop` 数据标识、`AONET_*` 环境变量和原有控制协议，确保已有配置/历史兼容；旧版本文档及包名保留历史事实。不要同时运行新旧应用共享同一数据目录。
 
 **Rust 驱动的本地网络实验台。** 中文浏览器 GUI，多站点列表选择、低频连通性探测、授权 HTTP 并发测试和真实 TCP 连接保持测试。
 
@@ -8,7 +10,7 @@
 
 ## Tauri 2 跨平台桌面版
 
-**macOS Apple Silicon 应用已构建并实际运行：** 双击 `dist/AoNet.app`，或解压 `dist/AoNet-macOS-arm64.zip` 后打开。可将应用拖入 Applications。无需启动终端或浏览器服务器；应用仅使用本机临时签名，未通过 Apple 公证，跨机器下载可能触发系统安全提示，不要关闭系统安全保护。
+**macOS Apple Silicon 本地构建：** 新产物为 `dist/spring-net.app` 和 `dist/spring-net-macOS-arm64.zip`；此前 AoNet 包保留，不自动删除。可将应用拖入 Applications。无需启动终端或浏览器服务器；应用仅使用本机临时签名，未通过 Apple 公证，跨机器下载可能触发系统安全提示，不要关闭系统安全保护。
 
 2026-10-27 已实现 GUI 授权管理、测试方案/工作区持久化、有界历史及按轮导出；50 项核心测试、21 项前端测试通过。已验证独立受控服务 HTTP/TCP 浏览器全链路及原生窗口/IPC/HTTP/历史。原生文件写入完整矩阵仍未验收通过。详见 [桌面验收状态](docs/desktop-status.md)。Windows 已提供原生构建入口，但**尚未生成/验收 Windows 安装包**；Mac最低版本配置为13.0，仅本机实际系统完成运行检查，不代表所有版本均已测试。
 
@@ -30,7 +32,7 @@ bash scripts/build-macos.sh
 
 Windows 在 PowerShell 中运行项目 `scripts/build-windows.ps1`，生成 NSIS `-setup.exe`；脚本仅在 Windows 执行。本机 Mac 不替代 Windows 验收，不承诺跨编译安装包。WebView2 未安装时安装器默认联网引导。构建成功后脚本才复制产物至 `dist/`，不会使用旧 Swift 包。
 
-GitLab CI 见 [Runner 安装与流水线说明](docs/gitlab-ci.md)：Linux Runner 自动做版本及前端检查；Windows x64、macOS arm64/Intel 原生打包使用对应标签的 Runner，通过 `BUILD_*` 变量启用，产物与 SHA256 作为 artifacts 保留。当前仅有 Linux Runner，原生打包默认关闭，补齐构建机后才可执行。`.github/workflows/desktop-build.yml` 是保留的手动 GitHub Actions 模板。
+推荐使用 [GitHub Actions 托管构建](docs/github-actions.md)：main/PR 自动检查，手动或版本标签触发 Windows x64、macOS arm64/Intel 原生打包，产物及 SHA256 上传为 artifacts；不需要自建原生 Runner。原 [GitLab CI 与自建 Runner 说明](docs/gitlab-ci.md) 保留兼容，打包默认关闭。
 
 本机曾遇官方源 TLS 下载失败；获准后使用临时 Cargo 镜像取得依赖，没有修改全局配置。若本机仅镜像缓存可用，可单次运行：
 

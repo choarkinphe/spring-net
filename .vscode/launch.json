@@ -2,10 +2,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "AoNet · 单进程调试",
+      "name": "spring-net · 单进程调试",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/target/debug/aonet",
+      "program": "${workspaceFolder}/target/debug/spring-net",
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "cargo build",
       "env": {"AONET_ROOT": "${workspaceFolder}"}

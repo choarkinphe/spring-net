@@ -283,7 +283,7 @@ pub async fn import_lists_dialog(
         let Some(selected) = app
             .dialog()
             .file()
-            .add_filter("AoNet JSON", &["json"])
+            .add_filter("spring-net JSON", &["json"])
             .blocking_pick_file()
         else {
             return Ok(None);
@@ -317,22 +317,22 @@ pub async fn export_dialog(
         .await?;
     let extension = if kind == "csv" { "csv" } else { "json" };
     let filename = if kind == "lists" {
-        "aonet-lists.json".to_owned()
+        "spring-net-lists.json".to_owned()
     } else if kind == "diagnostic" {
         format!(
-            "aonet-diagnostic-{}.json",
+            "spring-net-diagnostic-{}.json",
             id.as_deref().ok_or("缺少诊断 ID")?
         )
     } else if kind == "batch" {
-        format!("aonet-batch-{}.json", id.as_deref().ok_or("缺少批次 ID")?)
+        format!("spring-net-batch-{}.json", id.as_deref().ok_or("缺少批次 ID")?)
     } else {
-        format!("aonet-result.{extension}")
+        format!("spring-net-result.{extension}")
     };
     tauri::async_runtime::spawn_blocking(move || {
         let Some(selected) = app
             .dialog()
             .file()
-            .add_filter("AoNet export", &[extension])
+            .add_filter("spring-net export", &[extension])
             .set_file_name(&filename)
             .blocking_save_file()
         else {

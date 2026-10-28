@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
     std::io::stdout().flush()?;
     println!(
-        "AoNet {}\nGUI: http://127.0.0.1:{port}\n本机演示不代表真实外网承载能力；公共网站仅低频探测。",
+        "spring-net {}\nGUI: http://127.0.0.1:{port}\n本机演示不代表真实外网承载能力；公共网站仅低频探测。",
         env!("CARGO_PKG_VERSION")
     );
     let signal = shutdown.clone();
