@@ -30,7 +30,7 @@ bash scripts/build-macos.sh
 
 Windows 在 PowerShell 中运行项目 `scripts/build-windows.ps1`，生成 NSIS `-setup.exe`；脚本仅在 Windows 执行。本机 Mac 不替代 Windows 验收，不承诺跨编译安装包。WebView2 未安装时安装器默认联网引导。构建成功后脚本才复制产物至 `dist/`，不会使用旧 Swift 包。
 
-`.github/workflows/desktop-build.yml` 提供仅手动触发的 Mac/Windows runner 模板，使用 `npm ci`/locked，未推送、运行或发布；本目录目前非 Git 仓库。
+GitLab CI 见 [Runner 安装与流水线说明](docs/gitlab-ci.md)：Linux Runner 自动做版本及前端检查；Windows x64、macOS arm64/Intel 原生打包使用对应标签的 Runner，通过 `BUILD_*` 变量启用，产物与 SHA256 作为 artifacts 保留。当前仅有 Linux Runner，原生打包默认关闭，补齐构建机后才可执行。`.github/workflows/desktop-build.yml` 是保留的手动 GitHub Actions 模板。
 
 本机曾遇官方源 TLS 下载失败；获准后使用临时 Cargo 镜像取得依赖，没有修改全局配置。若本机仅镜像缓存可用，可单次运行：
 

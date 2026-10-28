@@ -1,6 +1,7 @@
 /target/
 /data/
 /dist/
+/ci-artifacts/
 /src-tauri/target/
 /src-tauri/gen/
 /node_modules/
