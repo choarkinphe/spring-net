@@ -33,7 +33,7 @@
     if(state.read)return state.read;
     state.loading=true;render();
     const pending=(async()=>{try{const s=await transport();if(!valid(s))throw new Error("代理设置格式无效");state.snapshot=s;state.unknown=false;text("proxy-error","");}
-      catch(e){state.unknown=true;text("proxy-error",`${errorText(e)}。请重新进入系统设置核对；不会自动切换为直连。`);}
+      catch(e){state.unknown=true;text("proxy-error",`${errorText(e)}。请重新进入代理设置核对；不会自动切换为直连。`);}
       finally{state.loading=false;render();notify();}})();
     state.read=pending;try{await pending;}finally{if(state.read===pending)state.read=null;}
   }
@@ -42,7 +42,7 @@
     if(blocked())throw new Error("请等待测试停止并收尾、设置核对完成后再修改。");
     const revision=state.snapshot.revision;state.saving=true;state.unknown=true;render();
     try{const s=await transport({expected_revision:revision,...data});if(!valid(s))throw new Error("保存结果无法核对");state.snapshot=s;state.unknown=false;text("proxy-error","");text("proxy-message","已保存。设置仅影响后续新测试；未发起任何目标检测。");}
-    catch(error){try{const latest=await transport();if(!valid(latest))throw new Error("核对响应无效");state.snapshot=latest;state.unknown=false;if(latest.revision===revision+1&&same(fields(latest),data)){text("proxy-message","保存结果已通过只读核对确认。");return;}throw new Error(`${errorText(error)}。已读取最新设置，请取消后重新编辑；未重发保存。`);}catch(e){if(state.unknown)text("proxy-error","保存结果未知，已锁定修改。请关闭弹窗并重新进入系统设置核对，不会自动重发或直连。");throw e;}}
+    catch(error){try{const latest=await transport();if(!valid(latest))throw new Error("核对响应无效");state.snapshot=latest;state.unknown=false;if(latest.revision===revision+1&&same(fields(latest),data)){text("proxy-message","保存结果已通过只读核对确认。");return;}throw new Error(`${errorText(error)}。已读取最新设置，请取消后重新编辑；未重发保存。`);}catch(e){if(state.unknown)text("proxy-error","保存结果未知，已锁定修改。请关闭弹窗并重新进入代理设置核对，不会自动重发或直连。");throw e;}}
     finally{state.saving=false;render();notify();}
   }
   function render(){

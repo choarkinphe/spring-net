@@ -225,7 +225,7 @@ impl AppService {
                 .map_err(|e| e.to_string())?;
             if active.as_ref() != Some(&requested) {
                 return Err(
-                    "请求代理与系统设置当前启用项不一致，请在系统设置中选择后再开始".into(),
+                    "请求代理与代理设置当前启用项不一致，请在代理设置中选择后再开始".into(),
                 );
             }
         }

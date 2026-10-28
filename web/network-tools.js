@@ -10,7 +10,7 @@
   function udpProxyIssue(tool){
     if(!udpTools.includes(tool))return "";
     if(!window.proxySettings?.isKnown?.()||typeof window.proxySettings.enabled!=="function")return "代理设置尚未核对，UDP DNS / QUIC 暂不可开始。";
-    return window.proxySettings.enabled()?"UDP DNS / QUIC 不支持当前 HTTP CONNECT / SOCKS5 代理，请先在系统设置明确关闭代理；不会自动直连。":"";
+    return window.proxySettings.enabled()?"UDP DNS / QUIC 不支持当前 HTTP CONNECT / SOCKS5 代理，请先在代理设置明确关闭代理；不会自动直连。":"";
   }
   function validQuery(name){return typeof name==="string"&&name.length>0&&name.length<=253&&name.split(".").every(label=>label.length<=63&&/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));}
   function validAlpn(value){return typeof value==="string"&&/^[\x21-\x7e]{1,255}$/.test(value)&&!value.includes(",");}

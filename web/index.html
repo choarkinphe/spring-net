@@ -20,7 +20,7 @@
 <body>
   <main class="tool-window">
     <header class="app-header"><strong>AoNet</strong><span id="version">正在连接…</span></header>
-    <nav class="page-nav" aria-label="页面"><button id="nav-tools" type="button" aria-current="page">基础检测</button><button id="nav-catalog" type="button">应用管理</button><button id="nav-batch" type="button">批量测试</button><button id="nav-settings" type="button">系统设置</button></nav>
+    <nav class="page-nav" aria-label="页面"><button id="nav-tools" type="button" aria-current="page">基础检测</button><button id="nav-catalog" type="button">应用管理</button><button id="nav-batch" type="button">批量测试</button><button id="nav-settings" type="button">代理设置</button></nav>
     <div id="tools-page">
     <section class="tool-input" aria-labelledby="tool-title">
       <h1 id="tool-title">基础网络检测</h1>
@@ -100,7 +100,7 @@
       <label class="editor-field">到期时间（含时区）<input id="permit-expiry" required placeholder="2026-12-31T23:59:59+08:00"></label><div class="batch-parameters"><label>并发上限<input id="permit-concurrency" type="number" min="1" max="1000" value="4" required></label><label>每秒起发上限<input id="permit-rate" type="number" min="1" max="1000" value="2" required></label><label>时长上限 / 秒<input id="permit-duration" type="number" min="1" max="300" value="120" required></label></div><button id="permit-prepare" type="submit">预览授权配置</button>
       </form></details><section id="permit-preview" hidden><h3>请核对完整配置</h3><pre id="permit-preview-text" class="batch-confirm-text"></pre><p id="permit-side-effects" class="hint"></p><button id="permit-confirm" type="button" class="primary">确认保存授权</button><button id="permit-discard" type="button">取消预览</button></section><div class="form-actions"><button id="permit-reload" type="button">重新读取授权</button><button id="permit-close" type="button">关闭</button></div></dialog>
     <section id="settings-page" class="settings-page" aria-labelledby="settings-title" hidden>
-      <div class="settings-heading"><div><h1 id="settings-title" tabindex="-1">系统设置</h1><p class="intro">统一配置后续连接测试使用的代理。</p></div><button id="proxy-add" class="add-button" type="button" title="新增代理" aria-label="新增代理" disabled>+</button></div>
+      <div class="settings-heading"><div><h1 id="settings-title" tabindex="-1">代理设置</h1><p class="intro">统一配置后续连接测试使用的代理。</p></div><button id="proxy-add" class="add-button" type="button" title="新增代理" aria-label="新增代理" disabled>+</button></div>
       <p id="proxy-error" class="error" role="alert" hidden></p><p id="proxy-message" class="hint" role="status"></p><p id="proxy-current" class="settings-current" role="status">代理设置尚未核对</p>
       <ul id="proxy-list" class="proxy-list"></ul><p id="proxy-busy" class="hint"></p>
       <p class="proxy-notice">可保存多组代理，同时只启用一组。支持无认证 HTTP CONNECT / SOCKS5，不修改操作系统代理。启用后会自动定时连接代理端点做可用性检查，不连接目标也不验证转发。代理失败不会回退直连。</p>
