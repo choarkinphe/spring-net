@@ -698,6 +698,8 @@ async fn proxy_failure_never_retries_other_proxy_ips_or_direct_target() {
             protocol,
             addresses: vec![closed_addr, fallback.local_addr().unwrap()],
         };
+        // A closed port can fail immediately or hit our deadline while Windows
+        // retries the TCP SYN. Either outcome must leave both fallback peers idle.
         assert!(matches!(
             connect_resolved_proxy_tunnel(
                 &resolved,
@@ -706,7 +708,7 @@ async fn proxy_failure_never_retries_other_proxy_ips_or_direct_target() {
                 Duration::from_secs(1)
             )
             .await,
-            Err(ProxyError::Connect)
+            Err(ProxyError::Connect | ProxyError::Timeout)
         ));
         assert!(
             tokio::time::timeout(Duration::from_millis(30), fallback.accept())

@@ -146,7 +146,19 @@ async fn check_with_budget(
         let mut buffer = [0u8; 513];
         let mut discarded = 0;
         loop {
-            let length = socket.recv(&mut buffer).await.map_err(|e| e.to_string())?;
+            let length = match socket.recv(&mut buffer).await {
+                Ok(length) => length,
+                // Winsock consumes the oversized datagram but reports WSAEMSGSIZE
+                // instead of returning a truncated buffer as Unix does.
+                Err(error) if cfg!(windows) && error.raw_os_error() == Some(10040) => {
+                    discarded += 1;
+                    if discarded >= 16 {
+                        return Err("收到16份无效/超长DNS响应，已停止接收；未重试".into());
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error.to_string()),
+            };
             match response(&buffer[..length], id, &query) {
                 Ok(message) => {
                     let elapsed = started.elapsed().as_secs_f64() * 1000.0;

@@ -270,7 +270,8 @@ mod tests {
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
-                    ) =>
+                    ) || (cfg!(windows)
+                        && e.kind() == std::io::ErrorKind::ConnectionAborted) =>
                 {
                     Ok(0)
                 }
@@ -427,7 +428,8 @@ mod tests {
                                     e.kind(),
                                     std::io::ErrorKind::UnexpectedEof
                                         | std::io::ErrorKind::ConnectionReset
-                                ) => {}
+                                ) || (cfg!(windows)
+                                    && e.kind() == std::io::ErrorKind::ConnectionAborted) => {}
                             other => panic!("unexpected application data {other:?}"),
                         }
                         true
