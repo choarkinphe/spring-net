@@ -20,6 +20,10 @@ test("GitHub release tags and renamed artifact paths are explicit",()=>{
   assert.equal(artifactName("windows-x64","0.9.0"),"spring-net-0.9.0-windows-x64-setup.exe");
   assert.equal(artifactName("macos-arm64","0.9.0"),"spring-net-0.9.0-macos-arm64.zip");
 });
+test("push checks cannot cancel manually dispatched package builds",()=>{
+  const workflow=require('node:fs').readFileSync(require('node:path').join(__dirname,'../.github/workflows/desktop-build.yml'),'utf8');
+  assert.match(workflow,/group:.*\$\{\{ github\.event_name \}\}/);
+});
 test("CI discovers explicit test paths without shell wildcard expansion",()=>{
   const files=testFiles();assert.ok(files.includes("scripts/version.test.cjs"));assert.ok(files.includes("scripts/ci-desktop.test.cjs"));assert.ok(files.includes("web/network-tools.test.cjs"));assert.equal(files.length,new Set(files).size);
 });
