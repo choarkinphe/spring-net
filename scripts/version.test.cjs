@@ -13,7 +13,7 @@ test("spring-net package names retain application data and Rust namespace compat
   assert.equal(JSON.parse(fs.readFileSync(path.join(root,"package.json"),"utf8")).name,"spring-net-desktop");
   const config=JSON.parse(fs.readFileSync(path.join(root,"src-tauri/tauri.conf.json"),"utf8"));
   assert.equal(config.productName,"spring-net");assert.equal(config.identifier,"local.aonet.desktop");
-  assert.match(fs.readFileSync(path.join(root,"Cargo.toml"),"utf8"),/\[lib\]\nname = "aonet"/);
+  assert.match(fs.readFileSync(path.join(root,"Cargo.toml"),"utf8"),/\[lib\]\r?\nname = "aonet"/);
   assert.match(fs.readFileSync(path.join(root,"src-tauri/Cargo.toml"),"utf8"),/package = "spring-net", path = "\.\."/);
 });
 test("version planning changes only application packages, validates first and is idempotent", () => {
@@ -24,11 +24,16 @@ test("version planning changes only application packages, validates first and is
       fs.mkdirSync(path.dirname(path.join(temp, name)), {recursive:true});
       fs.copyFileSync(path.join(root, name), path.join(temp, name));
     }
+    // Exercise Windows checkout line endings on every CI platform.
+    for (const name of files) {
+      const file=path.join(temp,name);
+      fs.writeFileSync(file,fs.readFileSync(file,"utf8").replace(/\r?\n/g,"\r\n"));
+    }
     const plan = versionPlan(temp, "1.2.3");
     assert.equal(plan.changes.length, 7);
     for (const change of plan.changes) fs.writeFileSync(path.join(temp, change.name), change.content);
     assert.equal(versionPlan(temp).changes.length, 0);
-    assert.match(fs.readFileSync(path.join(temp,"Cargo.lock"),"utf8"), /name = "axum"\nversion = "0\.7\.9"/);
+    assert.match(fs.readFileSync(path.join(temp,"Cargo.lock"),"utf8"), /name = "axum"\r?\nversion = "0\.7\.9"/);
     for (const invalid of ["1.2", "01.2.3", "1.2.3\n", "1.2.3; rm"]) assert.throws(() => versionPlan(temp, invalid));
     fs.writeFileSync(path.join(temp,"src-tauri/Cargo.toml"), "broken");
     assert.throws(() => versionPlan(temp,"2.0.0"), /数量异常/);
